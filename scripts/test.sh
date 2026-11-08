@@ -7,4 +7,4 @@ args=()
 if [[ "$(xcode-select -p)" == */CommandLineTools ]]; then
   args+=(-Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing)
 fi
-exec swift test "${args[@]}" "$@"
+exec swift test ${args[@]+"${args[@]}"} "$@"
