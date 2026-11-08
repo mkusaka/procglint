@@ -24,6 +24,7 @@ final class SettingsWindowController: NSWindowController {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 760),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "procglint Settings"
+        window.setAccessibilityIdentifier("settingsWindow")
         window.minSize = NSSize(width: 640, height: 700)
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -37,6 +38,9 @@ final class SettingsWindowController: NSWindowController {
         let unregister = NSButton(title: "Unregister agent", target: self, action: #selector(unregisterAgentService))
         let loginItems = NSButton(title: "Open Login Items…", target: self, action: #selector(showLoginItems))
         let copy = NSButton(title: "Copy MCP config", target: self, action: #selector(copyConfiguration))
+        copy.setAccessibilityIdentifier("copyMCPConfig")
+        menuBar.setAccessibilityIdentifier("menuBarToggle")
+        feedback.setAccessibilityIdentifier("settingsFeedback")
         let refresh = NSButton(title: "Refresh diagnostics", target: self, action: #selector(refreshDiagnostics))
         menuBar.target = self
         menuBar.action = #selector(toggleMenuBar)

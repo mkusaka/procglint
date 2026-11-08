@@ -4,6 +4,7 @@ import ProcglintCore
 @MainActor
 public final class ProcglintApplication: NSObject, NSApplicationDelegate {
     private let model: MonitorViewModel
+    private let uiTestingFixture: UITestingFixture?
     private let settingsModel: SettingsViewModel
     private let unregisterAgent: @MainActor () async throws -> Void
     private let openLoginItems: @MainActor () -> Void
@@ -20,14 +21,28 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
                 unregisterAgent: @escaping @MainActor () async throws -> Void,
                 openLoginItems: @escaping @MainActor () -> Void) throws
     {
-        self.unregisterAgent = unregisterAgent
-        self.openLoginItems = openLoginItems
-        let preferences = AppPreferences()
-        model = try MonitorViewModel(service: service, preferences: preferences)
+        let fixture = try ProcessInfo.processInfo.arguments.contains("--ui-testing") ? UITestingFixture() : nil
+        uiTestingFixture = fixture
+        let status: @MainActor () -> String
+        let register: @MainActor () throws -> Void
+        if fixture == nil {
+            self.unregisterAgent = unregisterAgent
+            self.openLoginItems = openLoginItems
+            status = registrationStatus
+            register = registerAgent
+        } else {
+            self.unregisterAgent = {}
+            self.openLoginItems = {}
+            status = { "UI test fixture (no agent)" }
+            register = {}
+        }
+        let preferences = try fixture?.preferences() ?? AppPreferences()
+        let monitor: any MonitorService = fixture.map { $0 as any MonitorService } ?? service
+        model = try MonitorViewModel(service: monitor, preferences: preferences)
         settingsModel = try SettingsViewModel(
-            service: service, preferences: preferences,
+            service: monitor, preferences: preferences,
             helperURL: MCPConfiguration.helperURL(in: bundle),
-            registrationStatus: registrationStatus, registerAgent: registerAgent
+            registrationStatus: status, registerAgent: register
         )
         super.init()
         model.onChange = { [weak self] in self?.render() }
@@ -51,6 +66,10 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
         main.visibilityChanged = { [weak self] in self?.updateVisibility() }
         syncMenuBar()
         openMainWindow()
+    }
+
+    public func applicationWillTerminate(_: Notification) {
+        uiTestingFixture?.cleanUp()
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
@@ -143,6 +162,7 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
             menu.addItem(withTitle: "Quit procglint", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             item.menu = menu
             item.button?.setAccessibilityLabel("procglint CPU, memory, and monitoring status")
+            item.button?.setAccessibilityIdentifier("monitorStatusItem")
             statusItem = item
         } else if !model.preferences.menuBar, let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
