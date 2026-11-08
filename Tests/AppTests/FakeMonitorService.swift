@@ -34,6 +34,10 @@ final class FakeMonitorService: MonitorService {
     var snapshotError: AgentError?
     var prepareError: AgentError?
     var historyError: AgentError?
+    var leaseHistoryError: AgentError?
+    var historySeries: [String: HistorySeries] = [:]
+    var beforeLease: (@MainActor () async -> Void)?
+    var beforeHistory: (@MainActor () async -> Void)?
     var beforeSnapshot: (@MainActor () async -> Void)?
     var beforeList: (@MainActor () async -> Void)?
     var beforeProcess: (@MainActor () async -> Void)?
@@ -81,10 +85,11 @@ final class FakeMonitorService: MonitorService {
 
     func history(_ request: HistoryRequest) async throws -> [HistorySeries] {
         historyRequests.append(request)
+        await beforeHistory?()
         if let historyError {
             throw historyError
         }
-        return request.series.map { HistorySeries(series: $0, points: []) }
+        return request.series.map { historySeries[$0] ?? HistorySeries(series: $0, points: []) }
     }
 
     func status() async throws -> MonitorStatus {
@@ -98,6 +103,10 @@ final class FakeMonitorService: MonitorService {
 
     func setLease(_ request: LeaseRequest) async throws -> SamplingLease {
         leaseRequests.append(request)
+        await beforeLease?()
+        if !request.processKeys.isEmpty, let leaseHistoryError {
+            throw leaseHistoryError
+        }
         if let snapshotError {
             throw snapshotError
         }

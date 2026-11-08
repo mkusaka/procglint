@@ -73,10 +73,16 @@ public actor SamplingScheduler {
     @discardableResult
     public func setLease(_ request: LeaseRequest, clientID: String) throws -> SamplingLease {
         try request.validate()
+        guard !stopped else { throw AgentError.agentUnavailable("Scheduler is shut down") }
+        guard !clientID.isEmpty else { throw AgentError.invalidArgument("Lease requires a client") }
         let existing = leases.values.first { $0.clientID == clientID && $0.kind == request.kind }
         let lease = SamplingLease(leaseID: existing?.leaseID ?? UUID().uuidString, clientID: clientID,
                                   kind: request.kind, intervalMS: request.intervalMS, expiresAt: clock.now + 30_000_000_000)
-        try addLease(lease)
+        if request.kind == .guiWindow {
+            try historyStore.track(keys: request.processKeys, owner: lease.leaseID, until: lease.expiresAt)
+        }
+        leases[lease.leaseID] = lease
+        replan()
         return lease
     }
 

@@ -126,8 +126,8 @@ Never exposed: command-line arguments, environment, process memory.
 
 ## History
 
-- Retained: system series always while sampling; process series only for pinned or observed processes.
-- Limits (defaults): 10 minutes window, 600 points per series, 16 process series per agent. Exceeding 16 → `history_limit_reached`.
+- Retained: system series always while sampling; process series only for pinned, observed, or GUI-selected processes.
+- Limits (defaults): 10 minutes window, 600 points per series, 16 process series per agent. To reserve slots, evict ownerless process series oldest-last-tracked first; active ownership exceeding the limit → `history_limit_reached`.
 - `HistoryPoint`: `t` (date), `cpu_percent`, `footprint_bytes`, `disk_read_bps`, `disk_write_bps` (Metric each; system uses `cpu_percent`, `memory_used_bytes`).
 - `HistorySeries`: `series` (`"system"` or a process_key), `points`, `gaps: [{from, to}]` — intervals where sampling was stopped or the process was not tracked. Charts draw no line across a gap. History never backfills unobserved time.
 
@@ -142,6 +142,9 @@ Never exposed: command-line arguments, environment, process memory.
 | `kind` | `gui_window | menu_bar | observation` |
 | `interval_ms` | 1000 / 2000 / 5000 / 10000 |
 | `expires_at` | monotonic deadline, required for `observation`; GUI leases are renewed by the GUI while visible (TTL 30 s). |
+
+`LeaseRequest` accepts optional `process_keys` (0…16, missing defaults to empty), only for `gui_window`: the lease owns tracking of those keys, within `max_process_series` (`history_limit_reached` on overflow), without backfill.
+Renewal replaces the tracked key set; release, expiry, or disconnect removes that ownership.
 
 Rules:
 

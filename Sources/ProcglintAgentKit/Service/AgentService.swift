@@ -222,7 +222,15 @@ public actor AgentService: AgentRequestHandler {
         case let .setLease(request):
             try requireGUI(hello)
             try request.validate()
-            return try await .setLease(scheduler.setLease(request, clientID: client.clientID))
+            let samples = try await visibleSamples(request.processKeys, scope: scope)
+            try requireClient(client)
+            let current = try self.permissions(for: hello)
+            guard current.contains(.includeSystem) || samples.allSatisfy(\.isOwn) else {
+                throw AgentError.notFound("Process is not visible")
+            }
+            let lease = try await scheduler.setLease(request, clientID: client.clientID)
+            await rememberHistoryOwnership(samples)
+            return .setLease(lease)
         case let .releaseLease(id):
             try requireGUI(hello)
             try await scheduler.releaseLease(id: id, clientID: client.clientID)

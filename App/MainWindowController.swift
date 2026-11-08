@@ -12,9 +12,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     let identity = NSTextField(wrappingLabelWithString: "Select a process")
     let path = NSTextField(wrappingLabelWithString: "")
     let feedback = NSTextField(wrappingLabelWithString: "")
-    let cpuChart = HistoryChartView(label: "CPU history, percent (one core = 100%)", fields: [{ $0.cpuPercent }])
-    let memoryChart = HistoryChartView(label: "Footprint history, bytes", fields: [{ $0.footprintBytes }])
-    let ioChart = HistoryChartView(label: "I/O history, bytes per second; blue read, orange write", fields: [{ $0.diskReadBps }, { $0.diskWriteBps }])
+    let systemCPUChart = HistoryChartView(label: "System CPU history, percent", fields: [{ $0.cpuPercent }], compact: true, format: Display.percent)
+    let systemMemoryChart = HistoryChartView(label: "System memory used history, bytes", fields: [{ $0.memoryUsedBytes }], compact: true, format: Display.bytes)
+    let cpuChart = HistoryChartView(label: "CPU history, percent (one core = 100%)", fields: [{ $0.cpuPercent }], format: Display.percent)
+    let memoryChart = HistoryChartView(label: "Footprint history, bytes", fields: [{ $0.footprintBytes }], format: Display.bytes)
+    let ioChart = HistoryChartView(label: "I/O history, bytes per second; blue read, orange write", fields: [{ $0.diskReadBps }, { $0.diskWriteBps }], format: { Display.bytes($0) + "/s" })
     let pin = NSButton(checkboxWithTitle: "Pin process history", target: nil, action: nil)
     let quitProcess = NSButton(title: "Quit (SIGTERM)", target: nil, action: nil)
     let killProcess = NSButton(title: "Force Quit (SIGKILL)", target: nil, action: nil)
@@ -47,6 +49,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     private func buildUI(_ window: NSWindow) {
+        systemCPUChart.setAccessibilityIdentifier("systemCPUChart")
+        systemMemoryChart.setAccessibilityIdentifier("systemMemoryChart")
+        cpuChart.setAccessibilityIdentifier("processCPUChart")
+        memoryChart.setAccessibilityIdentifier("processMemoryChart")
+        ioChart.setAccessibilityIdentifier("processIOChart")
         search.placeholderString = "Search name or exact PID"
         search.setAccessibilityLabel("Search processes by name or PID")
         search.delegate = self
@@ -107,9 +114,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         split.addArrangedSubview(inspector)
         inspector.widthAnchor.constraint(greaterThanOrEqualToConstant: 300).isActive = true
         listContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 600).isActive = true
-        let root = verticalStack([summary, split])
+        let cpuSummary = verticalStack([NSTextField(labelWithString: "System CPU · 0–100%"), systemCPUChart], spacing: 2)
+        let memorySummary = verticalStack([NSTextField(labelWithString: "Memory used / physical"), systemMemoryChart], spacing: 2)
+        for chart in [systemCPUChart, systemMemoryChart] {
+            chart.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        }
+        let summaryBar = NSStackView(views: [summary, cpuSummary, memorySummary])
+        summaryBar.spacing = 16
+        let root = verticalStack([summaryBar, split])
         split.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
-        summary.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
+        summaryBar.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         let content = NSView()
         inset(root, in: content)
         window.contentView = content
@@ -125,7 +139,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         killProcess.target = self
         killProcess.action = #selector(terminateProcess(_:))
         path.lineBreakMode = .byCharWrapping
-        let historyNote = NSTextField(wrappingLabelWithString: "Pin to retain history. Untracked time is not backfilled. I/O: blue read, orange write.")
+        let historyNote = NSTextField(wrappingLabelWithString: "History starts when a process is pinned or selected")
         let stack = verticalStack([
             identity, path, pin, historyNote,
             NSTextField(labelWithString: "CPU · 1 core = 100%"), cpuChart,
@@ -164,6 +178,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         pin.isEnabled = model.detail != nil
         pin.state = model.pinned ? .on : .off
         feedback.stringValue = model.inspectorMessage
+        systemCPUChart.update(model.systemHistory, fixedYRange: 0 ... 100)
+        let physical = model.header.map { Double($0.system.physicalMemoryBytes) } ?? 0
+        systemMemoryChart.update(model.systemHistory, fixedYRange: physical > 0 ? 0 ... physical : nil)
         cpuChart.update(model.history)
         memoryChart.update(model.history)
         ioChart.update(model.history)

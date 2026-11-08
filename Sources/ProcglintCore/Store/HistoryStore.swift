@@ -18,6 +18,7 @@ public struct HistoryStore: Sendable {
         var gapStart: Date?
         var gapStartTick: UInt64 = 0
         var latestTick: UInt64 = 0
+        var lastTrackedTick: UInt64 = 0
     }
 
     private struct Tracking: Sendable {
@@ -66,12 +67,13 @@ public struct HistoryStore: Sendable {
     public mutating func track(keys: [ProcessKey], owner: String, until deadline: UInt64) throws {
         prune()
         guard deadline > clock.now else { throw AgentError.invalidArgument("Tracking deadline must be in the future") }
-        try reserve(Set(keys))
+        try reserve(Set(keys), replacingOwner: owner)
         owners[owner] = Tracking(keys: Set(keys), deadline: deadline)
         markUntrackedGaps()
     }
 
     public mutating func untrack(owner: String) {
+        prune()
         owners.removeValue(forKey: owner)
         markUntrackedGaps()
     }
@@ -148,13 +150,29 @@ public struct HistoryStore: Sendable {
         owners.values.reduce(pinned) { $0.union($1.keys) }
     }
 
-    private mutating func reserve(_ keys: Set<ProcessKey>) throws {
+    private mutating func reserve(_ keys: Set<ProcessKey>, replacingOwner: String? = nil) throws {
         let new = keys.filter { buffers[$0.rawValue] == nil }
-        guard buffers.count - 1 + new.count <= maximumSeries else {
-            throw AgentError.historyLimitReached("Process history limit reached")
+        let needed = buffers.count - 1 + new.count - maximumSeries
+        if needed > 0 {
+            // Reserve against the replacement ownership without changing it if the request fails.
+            var protected = pinned.union(keys)
+            for (owner, tracking) in owners where owner != replacingOwner {
+                protected.formUnion(tracking.keys)
+            }
+            let names = Set(protected.map(\.rawValue))
+            let candidates = buffers.filter { $0.key != "system" && !names.contains($0.key) }.sorted {
+                if $0.value.lastTrackedTick == $1.value.lastTrackedTick {
+                    return $0.key < $1.key
+                }
+                return $0.value.lastTrackedTick < $1.value.lastTrackedTick
+            }
+            guard candidates.count >= needed else { throw AgentError.historyLimitReached("Process history limit reached") }
+            for candidate in candidates.prefix(needed) {
+                buffers.removeValue(forKey: candidate.key)
+            }
         }
         for key in new {
-            buffers[key.rawValue] = Buffer(latestTick: clock.now)
+            buffers[key.rawValue] = Buffer(latestTick: clock.now, lastTrackedTick: clock.now)
         }
     }
 
@@ -178,13 +196,24 @@ public struct HistoryStore: Sendable {
 
     private mutating func markUntrackedGaps() {
         let active = Set(trackedKeys.map(\.rawValue))
-        for name in buffers.keys where name != "system" && !active.contains(name) {
-            openGap(name, at: wallNow())
+        let now = clock.now
+        for name in buffers.keys where name != "system" {
+            if active.contains(name) {
+                buffers[name]?.lastTrackedTick = now
+            } else {
+                openGap(name, at: wallNow())
+            }
         }
     }
 
     private mutating func prune() {
         let now = clock.now
+        for tracking in owners.values where tracking.deadline <= now {
+            for key in tracking.keys {
+                let last = buffers[key.rawValue]?.lastTrackedTick ?? 0
+                buffers[key.rawValue]?.lastTrackedTick = max(last, tracking.deadline)
+            }
+        }
         owners = owners.filter { $0.value.deadline > now }
         markUntrackedGaps()
         let cutoff = now > windowNS ? now - windowNS : 0

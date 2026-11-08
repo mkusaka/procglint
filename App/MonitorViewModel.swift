@@ -12,6 +12,8 @@ final class MonitorViewModel {
     private(set) var selectedKey: ProcessKey?
     private(set) var detail: ProcessSample?
     private(set) var history: HistorySeries?
+    private(set) var systemHistory: HistorySeries?
+    private(set) var selectionUpdate: Task<Void, Never>?
     private(set) var pinned = false
     private(set) var nextCursor: String?
     private(set) var totalMatched = 0
@@ -20,6 +22,9 @@ final class MonitorViewModel {
     private(set) var isFetching = false
     private(set) var terminating = false
     private var leases: [LeaseKind: SamplingLease] = [:]
+    private var leaseUpdate: Task<Void, any Error>?
+    private var leaseProcessKeys: [ProcessKey] = []
+    private var historyLeaseMessage = ""
     private var agentInstanceID: String?
     private var selectionRevision = 0
     private var displayedQuery: ProcessQuery?
@@ -86,14 +91,48 @@ final class MonitorViewModel {
     }
 
     private func reconcileLeases(renew: Bool) async throws {
+        while let leaseUpdate {
+            try await leaseUpdate.value
+        }
+        // Selection and visibility can change while IPC is suspended; only one writer installs leases.
+        let update = Task {
+            defer { self.leaseUpdate = nil }
+            try await self.updateLeases(renew: renew)
+        }
+        leaseUpdate = update
+        try await update.value
+    }
+
+    private var selectedProcessKeys: [ProcessKey] {
+        selectedKey.map { [$0] } ?? []
+    }
+
+    private func updateLeases(renew: Bool) async throws {
         let kinds: [LeaseKind] = [.guiWindow, .menuBar]
         var renewing = renew
         repeat {
             for kind in kinds {
                 if let interval = wanted(kind) {
-                    if renewing || leases[kind]?.intervalMS != interval {
+                    let keys = kind == .guiWindow ? selectedProcessKeys : []
+                    if renewing || leases[kind]?.intervalMS != interval || (kind == .guiWindow && leaseProcessKeys != keys) {
                         // Even at the slowest 10 s tick this renews well before the GUI's 30 s TTL.
-                        leases[kind] = try await service.setLease(LeaseRequest(kind: kind, intervalMS: interval))
+                        do {
+                            leases[kind] = try await service.setLease(LeaseRequest(kind: kind, intervalMS: interval, processKeys: keys))
+                            if kind == .guiWindow {
+                                historyLeaseMessage = ""
+                            }
+                        } catch let error as AgentError where !keys.isEmpty && (error.code == .historyLimitReached || error.code == .notFound) {
+                            // A full store or an exited selection must not block refreshing the process list.
+                            leases[kind] = try await service.setLease(LeaseRequest(kind: kind, intervalMS: interval))
+                            historyLeaseMessage = error.code == .historyLimitReached
+                                ? "Process history is full (history_limit_reached). Unpin unused processes or stop other tracking to free a slot."
+                                : Display.error(error)
+                            message = historyLeaseMessage
+                            history = nil
+                        }
+                        if kind == .guiWindow {
+                            leaseProcessKeys = keys
+                        }
                     }
                 } else if let lease = leases[kind] {
                     try await service.releaseLease(id: lease.leaseID)
@@ -103,7 +142,7 @@ final class MonitorViewModel {
             renewing = false
         } while kinds.contains {
             leases[$0]?.intervalMS != wanted($0)
-        }
+        } || (windowVisible && leaseProcessKeys != selectedProcessKeys)
     }
 
     func tick() async {
@@ -115,6 +154,8 @@ final class MonitorViewModel {
             if pollingInterval != nil {
                 let snapshot = try await service.snapshot(top: 1, sort: .cpu)
                 if agentInstanceID != snapshot.agentInstanceID {
+                    systemHistory = nil
+                    history = nil
                     if agentInstanceID != nil {
                         leases.removeAll()
                     }
@@ -123,7 +164,14 @@ final class MonitorViewModel {
                 }
                 agentInstanceID = snapshot.agentInstanceID
                 header = snapshot.header
-                message = snapshot.status == .unavailable ? "unavailable: the agent could not enumerate processes" : ""
+                message = snapshot.status == .unavailable ? "unavailable: the agent could not enumerate processes" : historyLeaseMessage
+                if windowVisible {
+                    let request = HistoryRequest(series: ["system"], since: Date().addingTimeInterval(-Double(policy.historyMinutes * 60)))
+                    let series = try await service.history(request)
+                    if windowVisible {
+                        systemHistory = series.first { $0.series == "system" }
+                    }
+                }
                 if windowVisible, snapshot.status != .unavailable {
                     // Discard a response for an obsolete query; only request the latest pending query.
                     var requested: ProcessQuery
@@ -216,12 +264,19 @@ final class MonitorViewModel {
         pinned = false
         terminationMessage = ""
         onChange?()
+        selectionUpdate = Task { [weak self] in
+            guard let self else { return }
+            do { try await reconcileLeases(renew: false) } catch { report(error) }
+            onChange?()
+        }
     }
 
     func refreshInspector() async {
         guard windowVisible, let key = selectedKey else { return }
         let revision = selectionRevision
         do {
+            try await reconcileLeases(renew: false)
+            guard windowVisible, selectedKey == key, selectionRevision == revision else { return }
             if try preferences.store.allowedPermissions().contains(.includePaths) {
                 let process = try await service.process(key: key)
                 guard selectedKey == key, selectionRevision == revision else { return }
@@ -231,6 +286,7 @@ final class MonitorViewModel {
             let pins = try await service.listProcesses(pinnedQuery)
             guard selectedKey == key, selectionRevision == revision else { return }
             pinned = pins.items.contains { $0.processKey == key }
+            guard historyLeaseMessage.isEmpty else { return }
             let series = try await service.history(HistoryRequest(series: [key.rawValue], since: Date().addingTimeInterval(-Double(policy.historyMinutes * 60))))
             guard selectedKey == key, selectionRevision == revision else { return }
             history = series.first { $0.series == key.rawValue }

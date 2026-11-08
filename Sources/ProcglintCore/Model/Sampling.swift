@@ -48,26 +48,33 @@ public struct SamplingLease: Sendable, Codable, Equatable {
 public struct LeaseRequest: Sendable, Codable, Equatable {
     public var kind: LeaseKind
     public var intervalMS: SamplingInterval
+    public var processKeys: [ProcessKey]
 
-    public init(kind: LeaseKind, intervalMS: SamplingInterval) throws {
+    public init(kind: LeaseKind, intervalMS: SamplingInterval, processKeys: [ProcessKey] = []) throws {
         self.kind = kind
         self.intervalMS = intervalMS
+        self.processKeys = processKeys
         try validate()
     }
 
     public func validate() throws {
         guard kind != .observation else { throw AgentError.invalidArgument("Use startObservation for observation leases") }
+        guard processKeys.count <= 16, processKeys.isEmpty || kind == .guiWindow else {
+            throw AgentError.invalidArgument("Only gui_window leases accept process_keys, at most 16")
+        }
     }
 
     enum CodingKeys: String, CodingKey {
         case kind
         case intervalMS = "intervalMs"
+        case processKeys
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(kind: container.decode(LeaseKind.self, forKey: .kind),
-                      intervalMS: container.decode(SamplingInterval.self, forKey: .intervalMS))
+                      intervalMS: container.decode(SamplingInterval.self, forKey: .intervalMS),
+                      processKeys: container.decodeIfPresent([ProcessKey].self, forKey: .processKeys) ?? [])
     }
 }
 
