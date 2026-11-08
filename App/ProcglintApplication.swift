@@ -5,6 +5,8 @@ import ProcglintCore
 public final class ProcglintApplication: NSObject, NSApplicationDelegate {
     private let model: MonitorViewModel
     private let settingsModel: SettingsViewModel
+    private let unregisterAgent: @MainActor () async throws -> Void
+    private let openLoginItems: @MainActor () -> Void
     private var mainWindow: MainWindowController?
     private var settingsWindow: SettingsWindowController?
     private var statusItem: NSStatusItem?
@@ -14,8 +16,12 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
 
     public init(service: any MonitorService, bundle: Bundle = .main,
                 registrationStatus: @escaping @MainActor () -> String,
-                registerAgent: @escaping @MainActor () throws -> Void) throws
+                registerAgent: @escaping @MainActor () throws -> Void,
+                unregisterAgent: @escaping @MainActor () async throws -> Void,
+                openLoginItems: @escaping @MainActor () -> Void) throws
     {
+        self.unregisterAgent = unregisterAgent
+        self.openLoginItems = openLoginItems
         let preferences = AppPreferences()
         model = try MonitorViewModel(service: service, preferences: preferences)
         settingsModel = try SettingsViewModel(
@@ -31,6 +37,11 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
             Task { await self.model.tick() }
         }
         settingsModel.onPermissionsChanged = { [weak self] in self?.model.permissionsChanged() }
+    }
+
+    public func agentDidReconnect() async {
+        // A tick renews visible leases without replaying failed mutations.
+        await model.tick()
     }
 
     public func applicationDidFinishLaunching(_: Notification) {
@@ -77,7 +88,7 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         if settingsWindow == nil {
-            let settings = SettingsWindowController(model: settingsModel)
+            let settings = SettingsWindowController(model: settingsModel, unregisterAgent: unregisterAgent, openLoginItems: openLoginItems)
             settings.menuBarChanged = { [weak self] in self?.syncMenuBar() }
             settingsWindow = settings
         }
