@@ -24,6 +24,12 @@ Apple Silicon (arm64), macOS 15 or later, and a GUI login session for the per-us
 
 The packaged 1.0 interface is a complete app with bundled agent, MCP bridge and CLI:
 
+```sh
+brew install --cask mkusaka/tap/procglint
+```
+
+This installs **Procglint.app** to `/Applications` and links `procglint` and `procglint-mcp` into Homebrew's `bin`. Then continue at step 2. Without Homebrew:
+
 1. Download the app ZIP from [GitHub Releases](https://github.com/mkusaka/procglint/releases), unzip it and move **Procglint.app** to `/Applications` before registering the agent.
 2. Open the app, then **Settings…** (⌘,) → **Register agent…** to explicitly register its per-user agent (`io.github.mkusaka.procglint.agent`).
 3. If registration requires approval, allow Procglint in **System Settings → General → Login Items & Extensions**, then check registration again. Use `procglint doctor` for registration state and recovery instructions.

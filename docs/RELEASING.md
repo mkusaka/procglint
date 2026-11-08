@@ -1,6 +1,6 @@
 # Releasing procglint
 
-Releases contain `Procglint.app` with the GUI, per-user agent, MCP bridge, and CLI. They support Apple Silicon (arm64) on macOS 15 or later. There is no Intel build, automatic updater, appcast, or Homebrew publishing step.
+Releases contain `Procglint.app` with the GUI, per-user agent, MCP bridge, and CLI. They support Apple Silicon (arm64) on macOS 15 or later. There is no Intel build, automatic updater or appcast. Notarized tag releases update the Homebrew cask `mkusaka/tap/procglint`.
 
 ## GitHub configuration
 
@@ -16,13 +16,14 @@ The default mode is Developer ID signing and notarization. Set these environment
 | `APPLE_APP_STORE_CONNECT_API_KEY_BASE64` | Base64-encoded App Store Connect API `.p8` key authorized for notarization. |
 | `APPLE_APP_STORE_CONNECT_KEY_ID` | That API key's key ID. |
 | `APPLE_APP_STORE_CONNECT_ISSUER_ID` | That API key's issuer ID. |
+| `HOMEBREW_TAP_TOKEN` | Fine-grained token with Contents read/write on `mkusaka/homebrew-tap`; required for tag releases. It sends the `update-cask` dispatch that bumps `Casks/procglint.rb`. |
 
-Use `base64 < certificate.p12 | pbcopy` (or the `.p8` file) to prepare a secret without printing it to a terminal. Never commit signing assets or paste them into logs. No Apple Team ID, Apple ID password, Sparkle key, or Homebrew token is required. The temporary keychain, `.p12`, and `.p8` are removed in an `always()` cleanup step, including after a failed import.
+Use `base64 < certificate.p12 | pbcopy` (or the `.p8` file) to prepare a secret without printing it to a terminal. Never commit signing assets or paste them into logs. No Apple Team ID, Apple ID password or Sparkle key is required. The temporary keychain, `.p12`, and `.p8` are removed in an `always()` cleanup step, including after a failed import.
 
 The optional `RELEASE_SIGNING` repository/environment variable selects the signing mode:
 
 - Unset, or any value except `adhoc`: Developer ID signing, hardened runtime, notarization, stapling, and Gatekeeper assessment. Missing credentials cause failure; there is no silent fallback.
-- Exactly `adhoc`: ad-hoc signing with no notarization and no Apple secrets required.
+- Exactly `adhoc`: ad-hoc signing with no notarization, no Apple secrets and no Homebrew update (Gatekeeper would block an ad-hoc cask install).
 
 The workflow uses only `contents: write` for release publication; checkout credentials are not persisted. `GITHUB_TOKEN` is provided by GitHub, not a separate secret to create.
 

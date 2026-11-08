@@ -60,9 +60,15 @@ jobs:
           APPLE_APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APPLE_APP_STORE_CONNECT_API_KEY_BASE64 }}
           APPLE_APP_STORE_CONNECT_KEY_ID: ${{ secrets.APPLE_APP_STORE_CONNECT_KEY_ID }}
           APPLE_APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APPLE_APP_STORE_CONNECT_ISSUER_ID }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          for variable in APPLE_DEVELOPER_ID_P12_BASE64 APPLE_DEVELOPER_ID_P12_PASSWORD APPLE_KEYCHAIN_PASSWORD \
-            APPLE_APP_STORE_CONNECT_API_KEY_BASE64 APPLE_APP_STORE_CONNECT_KEY_ID APPLE_APP_STORE_CONNECT_ISSUER_ID; do
+          required=(APPLE_DEVELOPER_ID_P12_BASE64 APPLE_DEVELOPER_ID_P12_PASSWORD APPLE_KEYCHAIN_PASSWORD
+            APPLE_APP_STORE_CONNECT_API_KEY_BASE64 APPLE_APP_STORE_CONNECT_KEY_ID APPLE_APP_STORE_CONNECT_ISSUER_ID)
+          # Fail before publishing so a tag release never leaves the cask behind.
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            required+=(HOMEBREW_TAP_TOKEN)
+          fi
+          for variable in "${required[@]}"; do
             if [[ -z "${!variable:-}" ]]; then
               echo "::error::Missing required secret: $variable"
               exit 1
@@ -130,6 +136,17 @@ jobs:
             gh release create "$GITHUB_REF_NAME" "$archive" "$archive.sha256" \
               --verify-tag --title "Procglint $GITHUB_REF_NAME" --notes-file "$notes" --generate-notes
           fi
+      - name: Update Homebrew tap
+        if: github.event_name == 'push' && env.SIGNING == 'developer-id'
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          sha256=$(awk '{print $1}' "build/Procglint-$VERSION-arm64.zip.sha256")
+          gh api repos/mkusaka/homebrew-tap/dispatches \
+            -f event_type=update-cask \
+            -f "client_payload[cask]=procglint" \
+            -f "client_payload[version]=$VERSION" \
+            -f "client_payload[sha256]=$sha256"
       - name: Cleanup signing assets
         if: always()
         run: |
