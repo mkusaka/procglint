@@ -11,7 +11,7 @@ private let repository = URL(fileURLWithPath: #filePath).deletingLastPathCompone
     #expect(plist["Label"] as? String == procglintAgentMachServiceName)
     #expect(plist["BundleProgram"] as? String == "Contents/Helpers/procglint-agent")
     #expect(plist["MachServices"] as? [String: Bool] == [procglintAgentMachServiceName: true])
-    #expect(plist["ProcessType"] as? String == "Background")
+    #expect(plist["ProcessType"] as? String == "Adaptive")
     #expect(plist["KeepAlive"] == nil)
     #expect(plist["RunAtLoad"] == nil)
 }
@@ -66,6 +66,7 @@ private let repository = URL(fileURLWithPath: #filePath).deletingLastPathCompone
     let data = try Data(contentsOf: path)
     let plist = try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
     #expect(plist["Program"] as? String == home.appendingPathComponent("build & dev/procglint-agent").path)
+    #expect(plist["ProcessType"] as? String == "Adaptive")
     #expect(plist["MachServices"] as? [String: Bool] == [procglintAgentMachServiceName: true])
     #expect(plist["KeepAlive"] == nil)
     #expect(plist["RunAtLoad"] == nil)
