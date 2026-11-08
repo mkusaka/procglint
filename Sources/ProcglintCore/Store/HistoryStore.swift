@@ -135,10 +135,13 @@ public struct HistoryStore: Sendable {
 
     public mutating func bytesEstimate() -> UInt64 {
         prune()
-        return UInt64(buffers.values.reduce(0) { total, buffer in
-            total + buffer.points.capacity * MemoryLayout<TimedPoint?>.stride +
-                buffer.gaps.capacity * MemoryLayout<TimedGap?>.stride + 256
-        })
+        var total = 0
+        for buffer in buffers.values {
+            let points: Int = buffer.points.capacity * MemoryLayout<TimedPoint?>.stride
+            let gaps: Int = buffer.gaps.capacity * MemoryLayout<TimedGap?>.stride
+            total += points + gaps + 256
+        }
+        return UInt64(total)
     }
 
     private var trackedKeys: Set<ProcessKey> {
