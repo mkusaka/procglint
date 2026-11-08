@@ -25,6 +25,7 @@ final class ProcessTableDataSource: NSObject, NSTableViewDataSource, NSTableView
         guard let tableColumn, let column = ProcessColumn(rawValue: tableColumn.identifier.rawValue),
               let value = cellText(row: row, column: column) else { return nil }
         let cell = tableView.makeView(withIdentifier: tableColumn.identifier, owner: self) as? NSTableCellView ?? makeCell(tableColumn.identifier)
+        cell.textField?.setAccessibilityIdentifier("process.\(model.rows[row].pid).\(column.rawValue)")
         cell.textField?.stringValue = value.text
         cell.textField?.toolTip = value.reason
         cell.textField?.setAccessibilityHelp(value.reason)

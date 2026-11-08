@@ -62,6 +62,7 @@ fastlane/screenshots/**/*.png
 fastlane/test_output
 
 # procglint
+Procglint.xcodeproj/
 build/
 DerivedData/
 .DS_Store

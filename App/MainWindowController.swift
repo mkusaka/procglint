@@ -29,6 +29,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "procglint"
+        window.setAccessibilityIdentifier("mainWindow")
         window.minSize = NSSize(width: 1000, height: 650)
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -47,6 +48,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     private func buildUI(_ window: NSWindow) {
+        summary.setAccessibilityIdentifier("systemSummary")
+        identity.setAccessibilityIdentifier("processIdentity")
+        feedback.setAccessibilityIdentifier("terminationFeedback")
+        quitProcess.setAccessibilityIdentifier("quitProcess")
+        killProcess.setAccessibilityIdentifier("forceQuitProcess")
+        count.setAccessibilityIdentifier("processCount")
+        search.setAccessibilityIdentifier("processSearch")
+        filter.setAccessibilityIdentifier("processFilter")
+        table.setAccessibilityIdentifier("processTable")
         search.placeholderString = "Search name or exact PID"
         search.setAccessibilityLabel("Search processes by name or PID")
         search.delegate = self
@@ -70,6 +80,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         for column in ProcessColumn.allCases {
             let item = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
             item.title = column.title
+            item.headerCell.setAccessibilityIdentifier("column.\(column.rawValue)")
             item.width = column == .name ? 180 : 100
             item.isHidden = !model.preferences.visible(column)
             if column.sort != nil {
@@ -206,8 +217,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 alert.alertStyle = .warning
                 alert.messageText = "\(signal == .kill ? "Force quit" : "Quit") \(target.name) (PID \(target.pid))?"
                 alert.informativeText = "Unsaved data may be lost, even with SIGTERM. This sends \(signal == .kill ? "SIGKILL" : "SIGTERM") only to this process; it never escalates automatically."
-                alert.addButton(withTitle: "Cancel")
-                alert.addButton(withTitle: signal == .kill ? "Force Quit (SIGKILL)" : "Quit (SIGTERM)")
+                alert.addButton(withTitle: "Cancel").setAccessibilityIdentifier("cancelTermination")
+                alert.addButton(withTitle: signal == .kill ? "Force Quit (SIGKILL)" : "Quit (SIGTERM)").setAccessibilityIdentifier("confirmTermination")
                 return await withCheckedContinuation { continuation in
                     alert.beginSheetModal(for: window) { response in continuation.resume(returning: response == .alertSecondButtonReturn) }
                 }

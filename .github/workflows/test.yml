@@ -52,3 +52,39 @@ jobs:
       - name: Run tests
         run: scripts/test.sh
     timeout-minutes: 60
+  ui-test:
+    name: UI Tests
+    runs-on: macos-26
+    permissions: {}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select newest Xcode
+        run: |
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | sort -V | tail -1)"
+          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.25
+          cache: false
+          install_args: aqua:yonaskolb/XcodeGen
+      - name: Generate Xcode project
+        run: mise exec -- xcodegen generate
+      - name: Run UI tests
+        run: |
+          xcodebuild -project Procglint.xcodeproj \
+            -scheme Procglint \
+            -destination 'platform=macOS' \
+            -resultBundlePath build/UITests.xcresult \
+            -retry-tests-on-failure \
+            -test-iterations 3 \
+            CODE_SIGN_IDENTITY=- \
+            test
+      - name: Upload UI test results
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-test-results
+          path: build/UITests.xcresult
+    timeout-minutes: 60
