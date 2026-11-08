@@ -57,7 +57,7 @@ import Testing
 }
 
 @MainActor
-@Test func systemHistoryIsFetchedOncePerVisibleTickWithinPolicyWindow() async throws {
+@Test func systemHistoryUsesCursorOnlyForNewVisibleSnapshots() async throws {
     let prefs = preferences()
     defer { prefs.defaults.removePersistentDomain(forName: prefs.store.suiteName ?? "") }
     let service = try FakeMonitorService()
@@ -67,15 +67,16 @@ import Testing
     let model = try MonitorViewModel(service: service, preferences: prefs)
     await model.setVisibility(window: false, menuBar: true)
     #expect(service.historyRequests.isEmpty)
-    let start = Date()
     await model.setVisibility(window: true, menuBar: true)
-    let end = Date()
     #expect(service.historyRequests.count == 1)
     let request = try #require(service.historyRequests.first)
     #expect(request.series == ["system"])
-    let since = try #require(request.since)
-    #expect(since >= start.addingTimeInterval(-120) && since <= end.addingTimeInterval(-120))
+    #expect(request.since == nil)
+    #expect(request.cursor == "")
     #expect(model.systemHistory == system)
+    await model.tick()
+    #expect(service.historyRequests.count == 1)
+    service.current.snapshotID = "sample-2"
     await model.tick()
     #expect(service.historyRequests.count == 2)
     await model.setVisibility(window: false, menuBar: true)

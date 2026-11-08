@@ -23,6 +23,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     let loadMore = NSButton(title: "Load more", target: nil, action: nil)
     let count = NSTextField(labelWithString: "")
     var visibilityChanged: (@MainActor () -> Void)?
+    var focusChanged: (@MainActor () -> Void)?
     private var renderedRows: [ProcessSample] = []
 
     init(model: MonitorViewModel) {
@@ -248,6 +249,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
                 }
             }
         }
+    }
+
+    func windowDidBecomeKey(_: Notification) {
+        focusChanged?()
+    }
+
+    func windowDidResignKey(_: Notification) {
+        focusChanged?()
     }
 
     func windowDidChangeOcclusionState(_: Notification) {

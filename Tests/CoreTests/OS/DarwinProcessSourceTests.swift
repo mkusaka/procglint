@@ -20,6 +20,20 @@ struct DarwinProcessSourceTests {
         #expect(userName(for: getuid()) == NSUserName())
     }
 
+    @Test func censusUsesTheSameIdentityAndUIDAsBSD() throws {
+        let source = try DarwinProcessSource()
+        let census = try #require(try source.processCensus().first { $0.pid == getpid() }?.bsd)
+        let bsd = try #require(try source.bsdInfo(pid: getpid()))
+        #expect(census.startTimeUS == bsd.startTimeUS)
+        #expect(census.uid == bsd.uid)
+        #expect(census.ppid == bsd.ppid)
+        let first = try source.samplingUsage(pid: getpid(), startTimeUS: bsd.startTimeUS)
+        let second = try source.samplingUsage(pid: getpid(), startTimeUS: bsd.startTimeUS)
+        #expect(first.startAbstime > 0)
+        #expect(first.startAbstime == second.startAbstime)
+        #expect(first.usage.startTimeUS == bsd.startTimeUS)
+    }
+
     @Test func cpuTicksConvertToNanosecondsLikeGetrusage() throws {
         let source = try DarwinProcessSource()
         let beforeLower = try ownCPUTimeNS()

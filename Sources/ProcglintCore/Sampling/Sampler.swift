@@ -7,9 +7,18 @@ public actor Sampler {
         var time: UInt64
     }
 
+    private struct Acquisition {
+        var bsd: RawBSDInfo
+        var usage: RawRusage?
+        var startAbstime: UInt64?
+    }
+
     private struct Metadata {
         var bsd: RawBSDInfo
         var executableUUID: UUID?
+        var startAbstime: UInt64?
+        var comm: String?
+        var retryDeniedAt: UInt64?
         var user: String
         var path: String?
     }
@@ -23,8 +32,11 @@ public actor Sampler {
     private var previousTime: UInt64?
     private var previousCPU: RawCPUTicks?
     private var previous: [ProcessIdentity: Reading] = [:]
-    private var metadata: [ProcessIdentity: Metadata] = [:]
+    private var metadata: [Int32: Metadata] = [:]
     private var users: [UInt32: String] = [:]
+    private var nextReadings: [ProcessIdentity: Reading] = [:]
+    private var nextMetadata: [Int32: Metadata] = [:]
+    private var nextUsers: [UInt32: String] = [:]
 
     public init(source: any ProcessSource, clock: any MonotonicClock,
                 agentInstanceID: String = UUID().uuidString, agentUID: UInt32 = getuid()) throws
@@ -40,42 +52,50 @@ public actor Sampler {
     public func sample() async throws -> Snapshot {
         let now = clock.now
         let sampledAt = Date()
-        let pids: [Int32]?
+        let census: [SamplingProcess]?
         do {
-            pids = try source.listPIDs()
+            if let fast = source as? any SamplingProcessSource {
+                census = try fast.processCensus()
+            } else {
+                census = try source.listPIDs().map { SamplingProcess(pid: $0) }
+            }
         } catch ProcessSourceError.enumerationFailed {
-            pids = nil
+            census = nil
         }
         let ticks = try source.hostCPUTicks()
         let vm = try source.vmStatistics()
-        var coverage = Coverage(enumerated: pids?.count ?? 0)
+        var coverage = Coverage(enumerated: census?.count ?? 0)
         var processes: [ProcessSample] = []
         processes.reserveCapacity(coverage.enumerated)
-        var nextReadings: [ProcessIdentity: Reading] = [:]
-        var nextMetadata: [ProcessIdentity: Metadata] = [:]
-        var nextUsers: [UInt32: String] = [:]
+        nextReadings.removeAll(keepingCapacity: true)
+        nextMetadata.removeAll(keepingCapacity: true)
+        nextUsers.removeAll(keepingCapacity: true)
 
-        for pid in pids ?? [] {
+        for process in census ?? [] {
+            let pid = process.pid
             do {
-                guard let bsd = try source.bsdInfo(pid: pid) else { throw ProcessSourceError.exited }
+                let reading = try acquire(pid: pid, census: process.bsd)
+                let bsd = reading.bsd
+                let usage = reading.usage
+                let startAbstime = reading.startAbstime
                 let identity = try ProcessIdentity(bootSessionID: bootSessionID, pid: pid, startTimeUS: bsd.startTimeUS)
-                var usage: RawRusage?
-                do {
-                    guard let reading = try source.rusage(pid: pid), reading.startTimeUS == bsd.startTimeUS else { throw ProcessSourceError.exited }
-                    usage = reading
-                } catch ProcessSourceError.permissionDenied {
-                    // Keep the verified BSD identity even when resource counters are restricted.
-                }
                 let readingTime = clock.now
                 let user = nextUsers[bsd.uid] ?? users[bsd.uid] ?? userName(for: bsd.uid)
                 nextUsers[bsd.uid] = user
-                let entry: Metadata = if let cached = metadata[identity], cached.bsd == bsd, cached.executableUUID == usage?.executableUUID {
+                var entry: Metadata = if let cached = metadata[pid], cached.bsd == bsd, cached.executableUUID == usage?.executableUUID, cached.startAbstime == startAbstime, cached.comm == process.bsd?.name {
                     cached
                 } else {
-                    Metadata(bsd: bsd, executableUUID: usage?.executableUUID, user: user)
+                    Metadata(bsd: bsd, executableUUID: usage?.executableUUID, startAbstime: startAbstime, comm: process.bsd?.name, user: user)
                 }
-                nextMetadata[identity] = entry
-                let old = previous[identity]
+                if usage == nil {
+                    let retry = metadata[pid]?.retryDeniedAt ?? 0
+                    entry.retryDeniedAt = entry.bsd == metadata[pid]?.bsd && retry > sequence ? retry : sequence + 12
+                } else {
+                    entry.retryDeniedAt = nil
+                }
+                nextMetadata[pid] = entry
+                let sameStamp = metadata[pid]?.startAbstime == startAbstime
+                let old = sameStamp ? previous[identity].flatMap { $0.usage.executableUUID == usage?.executableUUID ? $0 : nil } : nil
                 let elapsed = old.flatMap { readingTime > $0.time ? readingTime - $0.time : nil }
                 let denied = usage == nil
                 let missing: Metric = denied ? .permissionDenied : .warmingUp
@@ -116,10 +136,10 @@ public actor Sampler {
         )
         // A failed census is not an empty successful sweep: keep baselines and live identities.
         var status: SnapshotStatus = .unavailable
-        if pids != nil {
-            previous = nextReadings
-            metadata = nextMetadata
-            users = nextUsers
+        if census != nil {
+            swap(&previous, &nextReadings)
+            swap(&metadata, &nextMetadata)
+            swap(&users, &nextUsers)
             previousCPU = ticks
             previousTime = now
             status = interval == nil ? .warmingUp : .ok
@@ -130,16 +150,61 @@ public actor Sampler {
                         status: status, coverage: coverage, system: system, processes: processes)
     }
 
+    private func acquire(pid: Int32, census: RawBSDInfo?) throws -> Acquisition {
+        if let fast = source as? any SamplingProcessSource, let census {
+            if let cached = metadata[pid], census.startTimeUS == cached.bsd.startTimeUS, census.name == cached.comm {
+                var bsd = cached.bsd
+                bsd.uid = census.uid
+                bsd.ppid = census.ppid
+                if bsd == cached.bsd, let retry = cached.retryDeniedAt, sequence < retry {
+                    return Acquisition(bsd: bsd)
+                }
+                do {
+                    let reading = try fast.samplingUsage(pid: pid, startTimeUS: bsd.startTimeUS)
+                    if reading.startAbstime == cached.startAbstime, reading.usage.executableUUID == cached.executableUUID {
+                        return Acquisition(bsd: bsd, usage: reading.usage, startAbstime: reading.startAbstime)
+                    }
+                } catch ProcessSourceError.permissionDenied {
+                    return Acquisition(bsd: bsd)
+                }
+            }
+            let before: RawBSDInfo
+            do {
+                guard let info = try source.bsdInfo(pid: pid) else { throw ProcessSourceError.exited }
+                before = info
+            } catch ProcessSourceError.permissionDenied {
+                return Acquisition(bsd: census)
+            }
+            guard before.startTimeUS == census.startTimeUS else { throw ProcessSourceError.exited }
+            do {
+                let reading = try fast.samplingUsage(pid: pid, startTimeUS: before.startTimeUS)
+                guard reading.usage.startTimeUS == before.startTimeUS,
+                      try source.bsdInfo(pid: pid) == before else { throw ProcessSourceError.exited }
+                return Acquisition(bsd: before, usage: reading.usage, startAbstime: reading.startAbstime)
+            } catch ProcessSourceError.permissionDenied {
+                return Acquisition(bsd: before)
+            }
+        }
+        guard let bsd = try source.bsdInfo(pid: pid) else { throw ProcessSourceError.exited }
+        do {
+            guard let usage = try source.rusage(pid: pid), usage.startTimeUS == bsd.startTimeUS else { throw ProcessSourceError.exited }
+            return Acquisition(bsd: bsd, usage: usage)
+        } catch ProcessSourceError.permissionDenied {
+            return Acquisition(bsd: bsd)
+        }
+    }
+
     /// The caller must enforce include_paths; paths never enter sweep snapshots.
     public func path(for key: ProcessKey) throws -> String? {
-        guard let cached = metadata[key.identity] else { throw ProcessSourceError.exited }
+        guard key.identity.bootSessionID == bootSessionID,
+              let cached = metadata[key.identity.pid], cached.bsd.startTimeUS == key.identity.startTimeUS else { throw ProcessSourceError.exited }
         try validate(key, metadata: cached)
         if let path = cached.path {
             return path
         }
         let path = try source.path(pid: key.identity.pid)
         try validate(key, metadata: cached)
-        metadata[key.identity]?.path = path
+        metadata[key.identity.pid]?.path = path
         return path
     }
 

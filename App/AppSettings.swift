@@ -19,6 +19,11 @@ final class AppPreferences {
         set { defaults.set(newValue, forKey: AppSettingsKeys.menuBar) }
     }
 
+    var adaptiveRefresh: Bool {
+        get { defaults.object(forKey: AppSettingsKeys.adaptiveRefresh) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: AppSettingsKeys.adaptiveRefresh) }
+    }
+
     func visible(_ column: ProcessColumn) -> Bool {
         !column.optional || (defaults.stringArray(forKey: AppSettingsKeys.columns) ?? []).contains(column.rawValue)
     }

@@ -27,6 +27,7 @@ final class FakeMonitorService: MonitorService {
     var processCalls: [ProcessKey] = []
     var historyRequests: [HistoryRequest] = []
     var pinned: Set<ProcessKey> = []
+    var clock: any MonotonicClock = SystemMonotonicClock()
     var snapshotCalls = 0
     var nextCursor: String?
     var pageOverride: ProcessPage?
@@ -62,6 +63,9 @@ final class FakeMonitorService: MonitorService {
     func listProcesses(_ query: ProcessQuery) async throws -> ProcessPage {
         queries.append(query)
         await beforeList?()
+        if let snapshotError {
+            throw snapshotError
+        }
         if let pageOverride {
             return pageOverride
         }
@@ -110,7 +114,7 @@ final class FakeMonitorService: MonitorService {
         if let snapshotError {
             throw snapshotError
         }
-        return SamplingLease(leaseID: request.kind.rawValue, clientID: "gui-a", kind: request.kind, intervalMS: request.intervalMS, expiresAt: 30_000_000_000)
+        return SamplingLease(leaseID: request.kind.rawValue, clientID: "gui-a", kind: request.kind, intervalMS: request.intervalMS, expiresAt: clock.now + 30_000_000_000)
     }
 
     func releaseLease(id: String) async throws {
