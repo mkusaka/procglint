@@ -91,7 +91,7 @@ func builtAppHasExpectedLayoutMetadataAndSignatures() throws {
     #expect(agent["Label"] as? String == "io.github.mkusaka.procglint.agent")
     #expect(agent["BundleProgram"] as? String == "Contents/Helpers/procglint-agent")
     #expect(agent["MachServices"] as? [String: Bool] == ["io.github.mkusaka.procglint.agent": true])
-    #expect(agent["ProcessType"] as? String == "Background")
+    #expect(agent["ProcessType"] as? String == "Adaptive")
     #expect(agent["LimitLoadToSessionType"] as? String == "Aqua")
     #expect(agent["RunAtLoad"] == nil)
     #expect(agent["KeepAlive"] == nil)

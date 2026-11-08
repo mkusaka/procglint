@@ -63,12 +63,10 @@ public final class DarwinProcessSource: ProcessSource {
     }
 
     public func rusage(pid: Int32) throws -> RawRusage? {
-        // BSD wall timestamps give rusage and permission-denied rows the same identity.
-        let before = try readBSD(pid: pid)
         var usage = rusage_info_v2()
         try Self.checkPOSIX(pg_rusage(pid, &usage))
+        // Identity-sensitive callers compare their pre-counter BSD read with this post-counter identity.
         let after = try readBSD(pid: pid)
-        guard before.startTimeUS == after.startTimeUS else { throw ProcessSourceError.exited }
         let (ticks, overflow) = usage.ri_user_time.addingReportingOverflow(usage.ri_system_time)
         guard !overflow else { throw ProcessSourceError.unavailable("CPU counter overflow") }
         return try RawRusage(

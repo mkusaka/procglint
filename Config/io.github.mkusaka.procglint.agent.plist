@@ -12,8 +12,9 @@
         <key>io.github.mkusaka.procglint.agent</key>
         <true/>
     </dict>
+    <!-- Adaptive lets UI/XPC work boost on demand, while idle work can fall back to Background rather than staying Interactive. -->
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>Adaptive</string>
     <key>LimitLoadToSessionType</key>
     <string>Aqua</string>
 </dict>

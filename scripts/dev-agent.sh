@@ -12,8 +12,15 @@ case "${1:-}" in
       echo "Unregister the bundled agent before starting the dev agent." >&2
       exit 1
     fi
-    swift build --product procglint-agent
-    binary="$(swift build --show-bin-path)/procglint-agent"
+    if [[ $# == 1 ]]; then
+      swift build --product procglint-agent
+      binary="$(swift build --show-bin-path)/procglint-agent"
+    elif [[ $# == 3 && "$2" == --binary && "$3" == /* && -f "$3" && -x "$3" ]]; then
+      binary="$3"
+    else
+      echo "Usage: $0 start [--binary /absolute/path/to/procglint-agent]" >&2
+      exit 2
+    fi
     mkdir -p "$(dirname "$plist")"
     temporary=$(mktemp "${plist}.XXXXXX")
     trap 'rm -f "$temporary"' EXIT
@@ -23,7 +30,8 @@ case "${1:-}" in
     /usr/libexec/PlistBuddy -c "Add :Program string $binary" "$temporary"
     /usr/libexec/PlistBuddy -c 'Add :MachServices dict' "$temporary"
     /usr/libexec/PlistBuddy -c 'Add :MachServices:io.github.mkusaka.procglint.agent bool true' "$temporary"
-    /usr/libexec/PlistBuddy -c 'Add :ProcessType string Background' "$temporary"
+    # Match the bundle: allow XPC-requested work to boost, without permanent Interactive priority.
+    /usr/libexec/PlistBuddy -c 'Add :ProcessType string Adaptive' "$temporary"
     /usr/libexec/PlistBuddy -c 'Add :LimitLoadToSessionType string Aqua' "$temporary"
     plutil -lint "$temporary"
     chmod 600 "$temporary"
@@ -44,7 +52,7 @@ case "${1:-}" in
     launchctl print "$domain/$label"
     ;;
   *)
-    echo "Usage: $0 {start|stop|status}" >&2
+    echo "Usage: $0 {start [--binary /absolute/path/to/procglint-agent]|stop|status}" >&2
     exit 2
     ;;
 esac
