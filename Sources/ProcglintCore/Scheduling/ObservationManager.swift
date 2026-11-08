@@ -87,6 +87,11 @@ public actor ObservationManager {
         return result
     }
 
+    var retainedObservationCount: Int {
+        refresh()
+        return entries.count
+    }
+
     private func owned(_ id: String, clientID: String) throws -> Entry {
         guard let entry = entries[id] else { throw AgentError.notFound("Observation not found") }
         guard entry.clientID == clientID else { throw AgentError.permissionDenied("Observation belongs to another client") }

@@ -39,6 +39,14 @@ public struct SnapshotStore: Sendable {
         self.clock = clock
     }
 
+    var retainedSnapshotCount: Int {
+        entries.count
+    }
+
+    var responseCacheCount: Int {
+        cache.count
+    }
+
     public var capturedAt: UInt64? {
         entries.last?.capturedAt
     }

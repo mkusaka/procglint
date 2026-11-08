@@ -134,6 +134,7 @@ public actor AgentService: AgentRequestHandler {
             switch request {
             case .snapshot, .listProcesses, .process, .history, .status, .policy:
                 try reads.take(at: clock.now)
+            case .prepareTermination, .terminate: break // Admission denials also need a termination audit.
             default:
                 try mutations.take(at: clock.now)
             }
@@ -254,26 +255,44 @@ public actor AgentService: AgentRequestHandler {
             try requireConfigure(hello, permissions: permissions)
             return try await .setPolicy(updatePolicy(proposed, expectedRevision: expectedRevision))
         case let .prepareTermination(key, signal):
-            try require(.terminate, in: permissions)
-            if signal == .kill {
-                try require(.forceKill, in: permissions)
+            let controllerClient: TerminationController.Client
+            do {
+                try mutations.take(at: clock.now)
+                try require(.terminate, in: permissions)
+                if signal == .kill {
+                    try require(.forceKill, in: permissions)
+                }
+                tickets = tickets.filter { $0.value.deadline > clock.now }
+                guard tickets.count + pendingPrepares < 64 else { throw AgentError.rateLimited("Too many outstanding termination tickets") }
+                controllerClient = try terminationClient(client, kind: hello.clientKind)
+            } catch {
+                try await termination.auditRejection(key: key, signal: signal,
+                                                     client: .init(clientID: client.clientID, kind: hello.clientKind, pid: client.pid, protectedPIDs: []),
+                                                     rejection: terminationRejection(error))
+                throw error
             }
-            tickets = tickets.filter { $0.value.deadline > clock.now }
-            guard tickets.count + pendingPrepares < 64 else { throw AgentError.rateLimited("Too many outstanding termination tickets") }
             pendingPrepares += 1
             defer { pendingPrepares -= 1 }
-            let controllerClient = try terminationClient(client, kind: hello.clientKind)
             let ticket = try await termination.prepare(key: key, signal: signal, client: controllerClient, permissions: permissions)
             if clients[client.clientID] != nil {
                 tickets[ticket.token] = TicketPermission(clientID: client.clientID, signal: signal, deadline: clock.now + 30_000_000_000)
             }
             return .prepareTermination(ticket)
         case let .terminate(token):
-            try require(.terminate, in: permissions)
-            if let ticket = tickets[token], ticket.clientID == client.clientID, ticket.signal == .kill {
-                try require(.forceKill, in: permissions)
+            let controllerClient: TerminationController.Client
+            do {
+                try mutations.take(at: clock.now)
+                try require(.terminate, in: permissions)
+                if let ticket = tickets[token], ticket.clientID == client.clientID, ticket.signal == .kill {
+                    try require(.forceKill, in: permissions)
+                }
+                controllerClient = try terminationClient(client, kind: hello.clientKind)
+            } catch {
+                try await termination.auditRejection(token: token,
+                                                     client: .init(clientID: client.clientID, kind: hello.clientKind, pid: client.pid, protectedPIDs: []),
+                                                     rejection: terminationRejection(error))
+                throw error
             }
-            let controllerClient = try terminationClient(client, kind: hello.clientKind)
             return try await .terminate(termination.terminate(token: token, client: controllerClient))
         }
     }
@@ -397,6 +416,19 @@ public actor AgentService: AgentRequestHandler {
         }
         policy = updated
         return updated
+    }
+
+    var retainedTicketCount: Int {
+        tickets.count
+    }
+
+    var retainedHistoryOwnershipCount: Int {
+        historyOwnership.count
+    }
+
+    private func terminationRejection(_ error: any Error) -> TerminationRejection? {
+        guard let error = error as? AgentError else { return nil }
+        return error.rejection ?? (error.code == .permissionDenied ? .permissionDenied : nil)
     }
 
     private func terminationClient(_ client: ClientContext, kind: ClientKind) throws -> TerminationController.Client {

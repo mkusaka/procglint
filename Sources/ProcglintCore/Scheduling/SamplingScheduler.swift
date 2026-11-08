@@ -162,6 +162,14 @@ public actor SamplingScheduler {
         try historyStore.series(series, since: since, until: until, fromTick: fromTick, throughTick: throughTick)
     }
 
+    var retainedSnapshotCount: Int {
+        snapshots.retainedSnapshotCount
+    }
+
+    var responseCacheCount: Int {
+        snapshots.responseCacheCount
+    }
+
     public func historyBytesEstimate() -> UInt64 {
         historyStore.bytesEstimate()
     }
