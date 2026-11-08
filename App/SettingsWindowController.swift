@@ -11,10 +11,16 @@ final class SettingsWindowController: NSWindowController {
     let diagnostics = NSTextView()
     let feedback = NSTextField(wrappingLabelWithString: "")
     private var permissionButtons: [Permission: NSButton] = [:]
+    private let unregisterAgent: @MainActor () async throws -> Void
+    private let openLoginItems: @MainActor () -> Void
     var menuBarChanged: (@MainActor () -> Void)?
 
-    init(model: SettingsViewModel) {
+    init(model: SettingsViewModel, unregisterAgent: @escaping @MainActor () async throws -> Void,
+         openLoginItems: @escaping @MainActor () -> Void)
+    {
         self.model = model
+        self.unregisterAgent = unregisterAgent
+        self.openLoginItems = openLoginItems
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 760),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "procglint Settings"
@@ -28,6 +34,8 @@ final class SettingsWindowController: NSWindowController {
         history.setAccessibilityLabel("History retention")
         let apply = NSButton(title: "Apply sampling policy", target: self, action: #selector(savePolicy))
         let register = NSButton(title: "Register agent…", target: self, action: #selector(registerAgent))
+        let unregister = NSButton(title: "Unregister agent", target: self, action: #selector(unregisterAgentService))
+        let loginItems = NSButton(title: "Open Login Items…", target: self, action: #selector(showLoginItems))
         let copy = NSButton(title: "Copy MCP config", target: self, action: #selector(copyConfiguration))
         let refresh = NSButton(title: "Refresh diagnostics", target: self, action: #selector(refreshDiagnostics))
         menuBar.target = self
@@ -53,7 +61,7 @@ final class SettingsWindowController: NSWindowController {
         diagnosticScroll.heightAnchor.constraint(equalToConstant: 180).isActive = true
         let stack = verticalStack([
             NSStackView(views: [NSTextField(labelWithString: "Update interval"), interval, NSTextField(labelWithString: "History"), history, apply]),
-            menuBar, registration, register, NSTextField(labelWithString: "MCP permissions"),
+            menuBar, registration, NSStackView(views: [register, unregister, loginItems]), NSTextField(labelWithString: "MCP permissions"),
         ] + permissionViews + [note, copy, refresh, diagnosticScroll, feedback])
         for view in [registration, note, diagnosticScroll, feedback] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -98,6 +106,20 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func registerAgent() {
         model.register(); Task { await model.refresh() }
+    }
+
+    @objc private func unregisterAgentService() {
+        Task {
+            do {
+                try await unregisterAgent()
+                model.message = model.registrationStatus()
+            } catch { model.message = Display.error(error) }
+            await model.refresh()
+        }
+    }
+
+    @objc private func showLoginItems() {
+        openLoginItems()
     }
 
     @objc private func refreshDiagnostics() {
