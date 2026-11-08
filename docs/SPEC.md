@@ -170,7 +170,7 @@ Effective permissions = OS-allowed ∩ app settings (`SettingsStore`, written by
 
 GUI clients get all permissions the app settings allow (terminate still requires a confirmation dialog in the UI).
 
-XPC peers are accepted only if same UID and the code signature satisfies the requirement for procglint's own executables (ad-hoc/dev builds: same-team-or-adhoc check controlled by a DEBUG build flag; documented in `docs/SECURITY.md`). Client-supplied names are never used for auth.
+XPC peers are accepted only if same UID and: when the agent is Team-signed, the peer has the same Team ID; when the agent is ad-hoc/unsigned (dev or ad-hoc release builds), the peer executable is in the agent's directory or the same `.app/Contents`, and the connection is pinned to the peer's cdhash. Documented in `docs/SECURITY.md`. Client-supplied names are never used for auth.
 
 Response caches are keyed by `(snapshot_id, scope)`, so clients with different scopes never share filtered results.
 
