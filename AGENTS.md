@@ -20,6 +20,8 @@ procglint: macOS (arm64, macOS 15+) process monitor. One per-user agent samples 
 - Do not commit. Leave changes in the working tree; the reviewer commits.
 - No new third-party dependencies.
 - JSON: `ProcglintJSON` encoder/decoder, snake_case, 64-bit ids/times as strings.
+- Test fixtures: avoid UUID-shaped or long hex/base64 literals (the commit secret scanner flags them). Use short readable fakes like `boot-a`, `tok-1`.
+- Executable products differ only by more than case (`procglint` CLI vs `procglint-gui` app binary): the filesystem is case-insensitive.
 - Never write to stdout in `procglint-mcp` except MCP protocol messages; logs go to stderr.
 
 ## Minimal implementation

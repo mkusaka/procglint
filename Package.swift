@@ -12,7 +12,7 @@ let package = Package(
         .executable(name: "procglint-agent", targets: ["ProcglintAgent"]),
         .executable(name: "procglint-mcp", targets: ["ProcglintMCP"]),
         .executable(name: "procglint", targets: ["ProcglintCLI"]),
-        .executable(name: "Procglint", targets: ["ProcglintAppMain"]),
+        .executable(name: "procglint-gui", targets: ["ProcglintAppMain"]),
         .executable(name: "procglint-workload", targets: ["WorkloadGenerator"]),
     ],
     targets: [

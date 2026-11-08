@@ -8,7 +8,7 @@ Code must match it; change this file first when a contract changes.
 | Executable | Target | Role |
 |---|---|---|
 | `procglint-agent` | `ProcglintAgent` (+ `ProcglintAgentKit`) | Per-user LaunchAgent. Only process that samples the OS. Owns history, leases, permission checks, termination. |
-| `Procglint.app` | `ProcglintAppMain` (+ `ProcglintApp` in `App/`) | AppKit GUI and menu bar. Talks to the agent over XPC. |
+| `Procglint.app` (binary `procglint-gui`) | `ProcglintAppMain` (+ `ProcglintApp` in `App/`) | AppKit GUI and menu bar. Talks to the agent over XPC. |
 | `procglint-mcp` | `ProcglintMCP` (+ `ProcglintMCPKit`) | stdio MCP server. Relays to the agent over XPC. |
 | `procglint` | `ProcglintCLI` | `status`, `doctor`, `export`. |
 | `procglint-workload` | `WorkloadGenerator` | Test fixture: CPU/memory/disk load, spawn/exit churn. |
