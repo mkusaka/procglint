@@ -42,6 +42,7 @@ jobs:
           persist-credentials: false
       - name: Select newest Xcode
         # macOS 15 is the minimum runtime, not the minimum compiler: build with the newest Xcode on the image.
+        shell: bash
         run: |
           xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | sort -V | tail -1)"
           echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
@@ -112,6 +113,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Select newest Xcode
+        shell: bash
         run: |
           xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | sort -V | tail -1)"
           echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
