@@ -1,0 +1,32 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:best-practices"],
+  minimumReleaseAge: "7 days",
+  platformAutomerge: false,
+  packageRules: [
+    {
+      description: "Automerge non-major mise tool updates after 7 days",
+      groupName: "mise tools (non-major)",
+      matchManagers: ["mise"],
+      matchUpdateTypes: ["minor", "patch"],
+      automerge: true,
+      automergeType: "pr",
+    },
+    {
+      description: "Automerge non-major GitHub Actions updates after 7 days",
+      groupName: "github-actions (non-major)",
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["minor", "patch", "digest", "pinDigest"],
+      automerge: true,
+      automergeType: "pr",
+    },
+    {
+      description: "Automerge non-major Swift package updates after 7 days",
+      groupName: "swift packages (non-major)",
+      matchManagers: ["swift"],
+      matchUpdateTypes: ["minor", "patch"],
+      automerge: true,
+      automergeType: "pr",
+    },
+  ],
+}

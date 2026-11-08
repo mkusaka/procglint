@@ -1,0 +1,21 @@
+glob_matcher: doublestar
+
+pre-commit:
+  parallel: true
+  commands:
+    swiftformat:
+      glob: "**/*.swift"
+      run: mise exec -- swiftformat {staged_files}
+      stage_fixed: true
+    swiftlint:
+      glob: "**/*.swift"
+      run: |
+        set -- {staged_files}
+        case "$(xcode-select -p)" in */CommandLineTools) export TOOLCHAIN_DIR=/Library/Developer/CommandLineTools ;; esac
+        export SCRIPT_INPUT_FILE_COUNT=$#
+        i=0
+        for file in "$@"; do
+          export SCRIPT_INPUT_FILE_$i="$file"
+          i=$((i + 1))
+        done
+        mise exec -- swiftlint lint --quiet --use-script-input-files

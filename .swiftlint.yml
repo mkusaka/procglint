@@ -1,0 +1,25 @@
+excluded:
+  - .build
+  - build
+  - DerivedData
+disabled_rules:
+  # Conflict with SwiftFormat output.
+  - trailing_comma
+  - opening_brace
+  - statement_position
+  # Sampling/permission code is deliberately linear for auditability.
+  - cyclomatic_complexity
+  - function_body_length
+  - line_length
+  - file_length
+  - type_body_length
+opt_in_rules:
+  - first_where
+  - last_where
+  - shorthand_optional_binding
+identifier_name:
+  min_length:
+    warning: 1
+  excluded:
+    - id
+reporter: xcode

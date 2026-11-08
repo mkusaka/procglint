@@ -1,0 +1,49 @@
+name: Test
+on:
+  workflow_call:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions: {}
+jobs:
+  lint:
+    name: Lint
+    runs-on: macos-26
+    permissions: {}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          version: 2026.10.25
+          cache: false
+      - name: SwiftFormat check
+        run: mise exec -- swiftformat --lint .
+      - name: SwiftLint check
+        run: mise exec -- swiftlint lint --quiet --strict
+    timeout-minutes: 30
+  swift-test:
+    name: Swift Package Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Show Swift toolchain
+        run: |
+          xcrun swift --version
+          xcodebuild -version
+      - name: Run tests
+        run: scripts/test.sh
+    timeout-minutes: 60
