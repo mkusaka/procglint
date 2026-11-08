@@ -1,0 +1,233 @@
+import AppKit
+import ProcglintCore
+
+@MainActor
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate {
+    let model: MonitorViewModel
+    let table = NSTableView()
+    let dataSource: ProcessTableDataSource
+    let summary = NSTextField(wrappingLabelWithString: "unavailable")
+    let search = NSSearchField()
+    let filter = NSSegmentedControl(labels: ["All", "Mine", "Pinned"], trackingMode: .selectOne, target: nil, action: nil)
+    let identity = NSTextField(wrappingLabelWithString: "Select a process")
+    let path = NSTextField(wrappingLabelWithString: "")
+    let feedback = NSTextField(wrappingLabelWithString: "")
+    let cpuChart = HistoryChartView(label: "CPU history, percent (one core = 100%)", fields: [{ $0.cpuPercent }])
+    let memoryChart = HistoryChartView(label: "Footprint history, bytes", fields: [{ $0.footprintBytes }])
+    let ioChart = HistoryChartView(label: "I/O history, bytes per second; blue read, orange write", fields: [{ $0.diskReadBps }, { $0.diskWriteBps }])
+    let pin = NSButton(checkboxWithTitle: "Pin process history", target: nil, action: nil)
+    let quitProcess = NSButton(title: "Quit (SIGTERM)", target: nil, action: nil)
+    let killProcess = NSButton(title: "Force Quit (SIGKILL)", target: nil, action: nil)
+    let loadMore = NSButton(title: "Load more", target: nil, action: nil)
+    let count = NSTextField(labelWithString: "")
+    var visibilityChanged: (@MainActor () -> Void)?
+    private var renderedRows: [ProcessSample] = []
+
+    init(model: MonitorViewModel) {
+        self.model = model
+        dataSource = ProcessTableDataSource(model: model)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.title = "procglint"
+        window.minSize = NSSize(width: 1000, height: 650)
+        window.isReleasedWhenClosed = false
+        super.init(window: window)
+        window.delegate = self
+        window.center()
+        buildUI(window)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("Programmatic UI only")
+    }
+
+    var monitoringVisible: Bool {
+        window?.isVisible == true && window?.occlusionState.contains(.visible) == true && window?.isMiniaturized == false
+    }
+
+    private func buildUI(_ window: NSWindow) {
+        search.placeholderString = "Search name or exact PID"
+        search.setAccessibilityLabel("Search processes by name or PID")
+        search.delegate = self
+        filter.selectedSegment = 0
+        filter.target = self
+        filter.action = #selector(filterChanged)
+        filter.setAccessibilityLabel("Process filter")
+        let controls = NSStackView(views: [search, filter])
+        search.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = true
+        scroll.documentView = table
+        table.dataSource = dataSource
+        table.delegate = dataSource
+        table.usesAlternatingRowBackgroundColors = true
+        table.allowsMultipleSelection = false
+        table.columnAutoresizingStyle = .noColumnAutoresizing
+        table.setAccessibilityLabel("Processes")
+        let columnMenu = NSMenu(title: "Columns")
+        for column in ProcessColumn.allCases {
+            let item = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
+            item.title = column.title
+            item.width = column == .name ? 180 : 100
+            item.isHidden = !model.preferences.visible(column)
+            if column.sort != nil {
+                item.sortDescriptorPrototype = NSSortDescriptor(key: column.rawValue, ascending: column == .name || column == .pid)
+            }
+            table.addTableColumn(item)
+            if column.optional {
+                let menuItem = NSMenuItem(title: column.title, action: #selector(toggleColumn(_:)), keyEquivalent: "")
+                menuItem.representedObject = column.rawValue
+                menuItem.target = self
+                menuItem.state = item.isHidden ? .off : .on
+                columnMenu.addItem(menuItem)
+            }
+        }
+        table.headerView?.menu = columnMenu
+        table.sortDescriptors = [NSSortDescriptor(key: ProcessColumn.cpu.rawValue, ascending: false)]
+        dataSource.queryChanged = { [weak self] in self?.refreshQuery() }
+        dataSource.selectionChanged = { [weak self] in
+            guard let self else { return }
+            Task { await self.model.refreshInspector() }
+        }
+        loadMore.target = self
+        loadMore.action = #selector(more)
+        let list = verticalStack([controls, scroll, NSStackView(views: [count, loadMore])])
+        for view in [controls, scroll] {
+            view.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+        }
+        let listContainer = NSView()
+        inset(list, in: listContainer, by: 0)
+        let inspector = inspectorView()
+        let split = NSSplitView()
+        split.isVertical = true
+        split.dividerStyle = .thin
+        split.addArrangedSubview(listContainer)
+        split.addArrangedSubview(inspector)
+        inspector.widthAnchor.constraint(greaterThanOrEqualToConstant: 300).isActive = true
+        listContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 600).isActive = true
+        let root = verticalStack([summary, split])
+        split.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
+        summary.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
+        let content = NSView()
+        inset(root, in: content)
+        window.contentView = content
+    }
+
+    private func inspectorView() -> NSView {
+        identity.isSelectable = true
+        path.isSelectable = true
+        pin.target = self
+        pin.action = #selector(togglePin)
+        quitProcess.target = self
+        quitProcess.action = #selector(terminateProcess(_:))
+        killProcess.target = self
+        killProcess.action = #selector(terminateProcess(_:))
+        path.lineBreakMode = .byCharWrapping
+        let historyNote = NSTextField(wrappingLabelWithString: "Pin to retain history. Untracked time is not backfilled. I/O: blue read, orange write.")
+        let stack = verticalStack([
+            identity, path, pin, historyNote,
+            NSTextField(labelWithString: "CPU · 1 core = 100%"), cpuChart,
+            NSTextField(labelWithString: "Memory footprint"), memoryChart,
+            NSTextField(labelWithString: "Attributed disk I/O per second"), ioChart,
+            quitProcess, killProcess, feedback,
+        ])
+        for view in [identity, path, historyNote, cpuChart, memoryChart, ioChart, feedback] {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        return scrollingContent(stack)
+    }
+
+    func render() {
+        summary.stringValue = model.summary
+        summary.toolTip = model.message
+        if renderedRows != model.rows {
+            renderedRows = model.rows
+            dataSource.reload(table)
+        }
+        count.stringValue = "\(model.rows.count) of \(model.totalMatched) processes"
+        loadMore.isHidden = model.nextCursor == nil
+        loadMore.isEnabled = !model.isFetching
+        if let detail = model.detail {
+            identity.stringValue = "\(detail.name)\nPID \(detail.pid) · \(detail.user) (uid \(detail.uid))\nKey: \(detail.processKey.rawValue)\nStarted: \(detail.startTime.formatted(date: .abbreviated, time: .standard))\nStatus: \(detail.status.rawValue)"
+            let pathsAllowed = (try? model.preferences.store.allowedPermissions().contains(.includePaths)) == true
+            path.stringValue = pathsAllowed ? "Path: \(detail.path ?? "— (not available)")" : "Path: — (permission_denied; enable include_paths in Settings)"
+        } else {
+            identity.stringValue = "Select a process"
+            path.stringValue = ""
+        }
+        let permissions = try? model.preferences.store.allowedPermissions()
+        let own = model.detail?.isOwn == true && model.detail?.status == .ok && model.header?.status != .unavailable && model.header != nil
+        quitProcess.isEnabled = own && permissions?.contains(.terminate) == true && !model.terminating
+        killProcess.isEnabled = quitProcess.isEnabled && permissions?.contains(.forceKill) == true
+        pin.isEnabled = model.detail != nil
+        pin.state = model.pinned ? .on : .off
+        feedback.stringValue = model.inspectorMessage
+        cpuChart.update(model.history)
+        memoryChart.update(model.history)
+        ioChart.update(model.history)
+    }
+
+    func controlTextDidChange(_: Notification) {
+        model.setSearch(search.stringValue); refreshQuery()
+    }
+
+    @objc private func filterChanged() {
+        model.setFilter([.all, .mine, .pinned][filter.selectedSegment]); refreshQuery()
+    }
+
+    private func refreshQuery() {
+        Task { await model.tick() }
+    }
+
+    @objc private func more() {
+        Task { await model.loadMore() }
+    }
+
+    @objc private func togglePin() {
+        Task { await model.togglePin() }
+    }
+
+    @objc private func toggleColumn(_ item: NSMenuItem) {
+        guard let raw = item.representedObject as? String, let column = ProcessColumn(rawValue: raw),
+              let tableColumn = table.tableColumns.first(where: { $0.identifier.rawValue == raw }) else { return }
+        tableColumn.isHidden.toggle()
+        item.state = tableColumn.isHidden ? .off : .on
+        model.preferences.setVisible(!tableColumn.isHidden, column: column)
+    }
+
+    @objc private func terminateProcess(_ sender: NSButton) {
+        let signal: TerminationSignal = sender === killProcess ? .kill : .term
+        Task {
+            await model.terminate(signal: signal) { [weak self] target, signal in
+                guard let window = self?.window else { return false }
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "\(signal == .kill ? "Force quit" : "Quit") \(target.name) (PID \(target.pid))?"
+                alert.informativeText = "Unsaved data may be lost, even with SIGTERM. This sends \(signal == .kill ? "SIGKILL" : "SIGTERM") only to this process; it never escalates automatically."
+                alert.addButton(withTitle: "Cancel")
+                alert.addButton(withTitle: signal == .kill ? "Force Quit (SIGKILL)" : "Quit (SIGTERM)")
+                return await withCheckedContinuation { continuation in
+                    alert.beginSheetModal(for: window) { response in continuation.resume(returning: response == .alertSecondButtonReturn) }
+                }
+            }
+        }
+    }
+
+    func windowDidChangeOcclusionState(_: Notification) {
+        visibilityChanged?()
+    }
+
+    func windowDidMiniaturize(_: Notification) {
+        visibilityChanged?()
+    }
+
+    func windowDidDeminiaturize(_: Notification) {
+        visibilityChanged?()
+    }
+
+    func windowWillClose(_: Notification) {
+        Task { @MainActor [weak self] in self?.visibilityChanged?() }
+    }
+}
