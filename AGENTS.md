@@ -20,7 +20,7 @@ procglint: macOS (arm64, macOS 15+) process monitor. One per-user agent samples 
 - Do not commit. Leave changes in the working tree; the reviewer commits.
 - No new third-party dependencies.
 - JSON: `ProcglintJSON` encoder/decoder, snake_case, 64-bit ids/times as strings.
-- CI also builds on macos-15 runners with an older Xcode/Swift (6.1). Local is Swift 6.4. Do not use language/library features newer than Swift 6.1, and split long arithmetic/closure expressions (the older type checker times out).
+- CI builds with the newest Xcode on macos-26 and macos-15 runners (macOS 15 is the minimum runtime). Avoid APIs newer than macOS 15 without `if #available`, and split long arithmetic/closure expressions (type checker timeouts).
 - Test fixtures: avoid UUID-shaped or long hex/base64 literals (the commit secret scanner flags them). Use short readable fakes like `boot-a`, `tok-1`.
 - Executable products differ only by more than case (`procglint` CLI vs `procglint-gui` app binary): the filesystem is case-insensitive.
 - Never write to stdout in `procglint-mcp` except MCP protocol messages; logs go to stderr.
