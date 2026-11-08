@@ -141,6 +141,10 @@ public actor Sampler {
         else { throw ProcessSourceError.exited }
     }
 
+    var cachedReadingCount: Int {
+        previous.count
+    }
+
     var cachedProcessCount: Int {
         metadata.count
     }

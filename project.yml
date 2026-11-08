@@ -1,0 +1,72 @@
+name: Procglint
+options:
+  deploymentTarget:
+    macOS: "15.0"
+packages:
+  ProcglintPackage:
+    path: .
+settings:
+  base:
+    ARCHS: arm64
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  Procglint:
+    type: application
+    platform: macOS
+    sources:
+      # Both builds use the exact same entry point and application delegate.
+      - Sources/ProcglintAppMain/main.swift
+    dependencies:
+      - package: ProcglintPackage
+        product: ProcglintApp
+      - package: ProcglintPackage
+        product: ProcglintCore
+      - package: ProcglintPackage
+        product: ProcglintIPC
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.mkusaka.procglint
+        EXECUTABLE_NAME: procglint-gui
+        INFOPLIST_FILE: Config/Info.plist
+        MARKETING_VERSION: "1.0"
+        BUILD_VERSION: "1"
+    postBuildScripts:
+      # Copy MCP config must refer to a real bundled executable, even in the UI test app.
+      - name: Embed MCP helper
+        script: |
+          set -eu
+          scratch="$DERIVED_FILE_DIR/MCPPackage"
+          xcrun swift build --package-path "$SRCROOT" --scratch-path "$scratch" --arch arm64 --product procglint-mcp
+          bin="$(xcrun swift build --package-path "$SRCROOT" --scratch-path "$scratch" --arch arm64 --show-bin-path)"
+          mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
+          cp "$bin/procglint-mcp" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/procglint-mcp"
+          codesign --force --sign - "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/procglint-mcp"
+        basedOnDependencyAnalysis: false
+  ProcglintUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - UITests
+    dependencies:
+      - target: Procglint
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.mkusaka.procglint.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Procglint
+schemes:
+  Procglint:
+    build:
+      targets:
+        Procglint: all
+        ProcglintUITests: [test]
+    test:
+      targets:
+        - ProcglintUITests
+      gatherCoverageData: false
+      parallelizeExecution: false

@@ -129,7 +129,9 @@ private actor ClientSession {
         do {
             guard data.count <= agentPayloadLimit else { throw AgentError.invalidArgument("XPC request exceeds 4 MiB") }
             let request: AgentRequest
-            do { request = try ProcglintJSON.decoder().decode(AgentRequest.self, from: data) } catch {
+            do { request = try ProcglintJSON.decoder().decode(AgentRequest.self, from: data) } catch let error as AgentError where error.code == .invalidProcessKey {
+                throw error
+            } catch {
                 throw AgentError.invalidArgument("Malformed XPC request")
             }
             await connected.value

@@ -75,11 +75,14 @@ public actor AgentClient: MonitorService {
         let connection = endpoint.map(NSXPCConnection.init(listenerEndpoint:))
             ?? NSXPCConnection(machServiceName: procglintAgentMachServiceName)
         connection.remoteObjectInterface = NSXPCInterface(with: ProcglintAgentXPC.self)
+        // Bind the weak reference before creating the Task: Swift 6.2 rejects sending a captured weak var.
         connection.interruptionHandler = { [weak self] in
-            Task { await self?.connectionLost(generation: current) }
+            guard let self else { return }
+            Task { await self.connectionLost(generation: current) }
         }
         connection.invalidationHandler = { [weak self] in
-            Task { await self?.connectionLost(generation: current) }
+            guard let self else { return }
+            Task { await self.connectionLost(generation: current) }
         }
         self.connection = ClientConnection(connection)
         connection.activate()
@@ -130,14 +133,16 @@ public actor AgentClient: MonitorService {
                 }
                 pending[id] = Pending(continuation: continuation, timeout: timer)
                 let proxy = connection.remoteObjectProxyWithErrorHandler { [weak self] _ in
-                    Task { await self?.connectionLost(generation: expected) }
+                    guard let self else { return }
+                    Task { await self.connectionLost(generation: expected) }
                 }
                 guard let remote = proxy as? any ProcglintAgentXPC else {
                     connectionLost(generation: expected)
                     return
                 }
                 remote.send(data) { [weak self] reply in
-                    Task { await self?.finish(id, result: .success(reply)) }
+                    guard let self else { return }
+                    Task { await self.finish(id, result: .success(reply)) }
                 }
             }
         } onCancel: {

@@ -145,6 +145,26 @@ public actor TerminationController {
         return try TerminationResult(outcome: .signalSent, exitedConfirmed: hasExited(key: record.ticket.processKey))
     }
 
+    /// The service uses these entry points for denials before target/parent-chain validation can run.
+    public func auditRejection(key: ProcessKey, signal: TerminationSignal, client: Client,
+                               rejection: TerminationRejection?) throws
+    {
+        try audit(key: key, name: "", signal: signal, client: client, outcome: "rejected", rejection: rejection)
+    }
+
+    public func auditRejection(token: String, client: Client, rejection: TerminationRejection?) throws {
+        if let record = tokens[token] {
+            try audit(record: record, client: client, outcome: "rejected", rejection: rejection)
+        } else {
+            try auditLog.appendUnresolvedTermination(timestamp: Date(), clientKind: client.kind,
+                                                     clientPID: client.pid, rejection: rejection)
+        }
+    }
+
+    var retainedTokenCount: Int {
+        tokens.count
+    }
+
     public func invalidateAll() {
         tokens.removeAll()
     }

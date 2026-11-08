@@ -31,7 +31,16 @@ public struct AgentRegistration {
     }
 
     public func unregister() async throws {
-        try await service.unregister()
+        // The completion form avoids sending the non-Sendable SMAppService off the main actor (Swift 6.2).
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            service.unregister { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     public func openLoginItemsSettings() {
