@@ -2,6 +2,7 @@ excluded:
   - .build
   - build
   - DerivedData
+  - worktrees
 disabled_rules:
   # Conflict with SwiftFormat output.
   - trailing_comma
