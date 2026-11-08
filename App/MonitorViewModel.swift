@@ -20,7 +20,13 @@ final class MonitorViewModel {
     private(set) var windowVisible = false
     private(set) var menuBarVisible = false
     private(set) var isFetching = false
+    private(set) var focused = true
+    private(set) var focusUpdate: Task<Void, Never>?
     private(set) var terminating = false
+    private let clock: any MonotonicClock
+    private var historySnapshotID: String?
+    private var historySelectedKey: ProcessKey?
+    private var historyCursor: String?
     private var leases: [LeaseKind: SamplingLease] = [:]
     private var leaseUpdate: Task<Void, any Error>?
     private var leaseProcessKeys: [ProcessKey] = []
@@ -33,15 +39,46 @@ final class MonitorViewModel {
     var message = ""
     var onChange: (@MainActor () -> Void)?
 
-    init(service: any MonitorService, preferences: AppPreferences) throws {
+    init(service: any MonitorService, preferences: AppPreferences, clock: any MonotonicClock = SystemMonotonicClock()) throws {
         self.service = service
         self.preferences = preferences
+        self.clock = clock
         policy = try preferences.store.samplingPolicy()
         query = try ProcessQuery(filter: .all, limit: 200, fields: ProcessField.allCases.filter { $0 != .path })
     }
 
+    deinit { focusUpdate?.cancel() }
+
+    private var windowInterval: SamplingInterval {
+        guard preferences.adaptiveRefresh, !focused else { return policy.guiIntervalMS }
+        switch policy.guiIntervalMS {
+        case .oneSecond: return .twoSeconds
+        case .twoSeconds: return .fiveSeconds
+        case .fiveSeconds, .tenSeconds: return .tenSeconds
+        }
+    }
+
+    func setFocus(appActive: Bool, keyWindow: Bool) {
+        let focused = appActive && keyWindow
+        focusUpdate?.cancel()
+        focusUpdate = nil
+        guard self.focused != focused else { return }
+        let deadline = clock.now + 1_000_000_000
+        let clock = clock
+        focusUpdate = Task { [weak self] in
+            do {
+                try await clock.sleep(until: deadline)
+                try Task.checkCancellation()
+                guard let self else { return }
+                focusUpdate = nil
+                self.focused = focused
+                await tick()
+            } catch { /* A newer focus event replaces the pending change. */ }
+        }
+    }
+
     var pollingInterval: TimeInterval? {
-        let intervals = [windowVisible ? policy.guiIntervalMS : nil, menuBarVisible ? policy.menuBarIntervalMS : nil].compactMap(\.self)
+        let intervals = [windowVisible ? windowInterval : nil, menuBarVisible ? policy.menuBarIntervalMS : nil].compactMap(\.self)
         return intervals.map { Double($0.rawValue) / 1000 }.min()
     }
 
@@ -75,6 +112,12 @@ final class MonitorViewModel {
         onChange?()
     }
 
+    func agentDidReconnect() async {
+        // A replacement connection has new lease ownership even if the agent instance is unchanged.
+        leases.removeAll()
+        await tick()
+    }
+
     func setVisibility(window: Bool, menuBar: Bool) async {
         windowVisible = window
         menuBarVisible = menuBar
@@ -84,7 +127,7 @@ final class MonitorViewModel {
 
     private func wanted(_ kind: LeaseKind) -> SamplingInterval? {
         switch kind {
-        case .guiWindow: windowVisible ? policy.guiIntervalMS : nil
+        case .guiWindow: windowVisible ? windowInterval : nil
         case .menuBar: menuBarVisible ? policy.menuBarIntervalMS : nil
         case .observation: nil
         }
@@ -114,11 +157,15 @@ final class MonitorViewModel {
             for kind in kinds {
                 if let interval = wanted(kind) {
                     let keys = kind == .guiWindow ? selectedProcessKeys : []
-                    if renewing || leases[kind]?.intervalMS != interval || (kind == .guiWindow && leaseProcessKeys != keys) {
-                        // Even at the slowest 10 s tick this renews well before the GUI's 30 s TTL.
+                    let renewalDue = renewing && (leases[kind]?.expiresAt ?? 0) < clock.now + 2 * interval.nanoseconds
+                    let retryHistory = renewing && kind == .guiWindow && !historyLeaseMessage.isEmpty
+                    if renewalDue || retryHistory || leases[kind]?.intervalMS != interval || (kind == .guiWindow && leaseProcessKeys != keys) {
                         do {
                             leases[kind] = try await service.setLease(LeaseRequest(kind: kind, intervalMS: interval, processKeys: keys))
                             if kind == .guiWindow {
+                                if !historyLeaseMessage.isEmpty {
+                                    historySnapshotID = nil
+                                }
                                 historyLeaseMessage = ""
                             }
                         } catch let error as AgentError where !keys.isEmpty && (error.code == .historyLimitReached || error.code == .notFound) {
@@ -152,42 +199,71 @@ final class MonitorViewModel {
         do {
             try await reconcileLeases(renew: true)
             if pollingInterval != nil {
-                let snapshot = try await service.snapshot(top: 1, sort: .cpu)
-                if agentInstanceID != snapshot.agentInstanceID {
-                    systemHistory = nil
-                    history = nil
-                    if agentInstanceID != nil {
-                        leases.removeAll()
-                    }
-                    policy = try await service.policy()
-                    try await reconcileLeases(renew: false)
-                }
-                agentInstanceID = snapshot.agentInstanceID
-                header = snapshot.header
-                message = snapshot.status == .unavailable ? "unavailable: the agent could not enumerate processes" : historyLeaseMessage
                 if windowVisible {
-                    let request = HistoryRequest(series: ["system"], since: Date().addingTimeInterval(-Double(policy.historyMinutes * 60)))
-                    let series = try await service.history(request)
-                    if windowVisible {
-                        systemHistory = series.first { $0.series == "system" }
-                    }
-                }
-                if windowVisible, snapshot.status != .unavailable {
-                    // Discard a response for an obsolete query; only request the latest pending query.
+                    // ProcessPage already carries the complete system header.
                     var requested: ProcessQuery
                     repeat {
                         requested = query
                         let page = try await refreshedPage(requested)
-                        if requested == query {
+                        if requested == query, windowVisible {
                             apply(page)
                         }
                     } while requested != query && windowVisible
-                    await refreshInspector()
+                } else {
+                    header = try await service.snapshot(top: 1, sort: .cpu).header
+                }
+                if let header {
+                    if agentInstanceID != header.agentInstanceID {
+                        systemHistory = nil
+                        history = nil
+                        historySnapshotID = nil
+                        historyCursor = nil
+                        if agentInstanceID != nil {
+                            leases.removeAll()
+                        }
+                        policy = try await service.policy()
+                        try await reconcileLeases(renew: false)
+                    }
+                    agentInstanceID = header.agentInstanceID
+                    message = header.status == .unavailable ? "unavailable: the agent could not enumerate processes" : historyLeaseMessage
+                    if windowVisible, header.status != .unavailable,
+                       historySnapshotID != header.snapshotID || historySelectedKey != selectedKey
+                    {
+                        await refreshInspector(refreshHistory: false)
+                        let key = selectedKey
+                        let revision = selectionRevision
+                        let selectors = ["system"] + (historyLeaseMessage.isEmpty ? selectedProcessKeys.map(\.rawValue) : [])
+                        let request = HistoryRequest(series: selectors, cursor: historyCursor ?? "")
+                        let series: [HistorySeries]
+                        do {
+                            series = try await service.history(request)
+                        } catch let error as AgentError where selectors.count > 1 && error.code == .notFound {
+                            // A selection can exit after the page arrives; keep the independent system chart live.
+                            message = Display.error(error)
+                            series = try await service.history(HistoryRequest(series: ["system"], cursor: request.cursor))
+                        }
+                        if windowVisible, selectionRevision == revision {
+                            systemHistory = Self.appending(series.first { $0.series == "system" }, to: systemHistory)
+                            history = Self.appending(series.first { $0.series == key?.rawValue }, to: history)
+                            historyCursor = series.compactMap(\.nextCursor).first
+                            historySnapshotID = header.snapshotID
+                            historySelectedKey = key
+                        }
+                    }
                 }
             }
         } catch { report(error) }
         // Visibility can change while an IPC request is suspended.
         do { try await reconcileLeases(renew: false) } catch { report(error) }
+    }
+
+    private static func appending(_ incoming: HistorySeries?, to previous: HistorySeries?) -> HistorySeries? {
+        guard var incoming else { return nil }
+        if incoming.isDelta, let previous, previous.series == incoming.series, let count = incoming.retainedPointCount {
+            incoming.points = Array((previous.points + incoming.points).suffix(count))
+            incoming.isDelta = false
+        }
+        return incoming
     }
 
     private func refreshedPage(_ requested: ProcessQuery) async throws -> ProcessPage {
@@ -213,6 +289,7 @@ final class MonitorViewModel {
     }
 
     func apply(_ page: ProcessPage, append: Bool = false) {
+        let sameSnapshot = header?.snapshotID == page.snapshot.snapshotID && header?.agentInstanceID == page.snapshot.agentInstanceID
         guard page.snapshot.status != .unavailable else {
             header = page.snapshot
             return
@@ -231,7 +308,9 @@ final class MonitorViewModel {
             select(nil)
         }
         if let selectedKey {
+            let path = sameSnapshot ? detail?.path : nil
             detail = rows.first { $0.processKey == selectedKey }
+            detail?.path = path
         }
     }
 
@@ -261,6 +340,8 @@ final class MonitorViewModel {
         selectedKey = key
         detail = rows.first { $0.processKey == key }
         history = nil
+        historyCursor = nil
+        historySnapshotID = nil
         pinned = false
         terminationMessage = ""
         onChange?()
@@ -271,7 +352,7 @@ final class MonitorViewModel {
         }
     }
 
-    func refreshInspector() async {
+    func refreshInspector(refreshHistory: Bool = true) async {
         guard windowVisible, let key = selectedKey else { return }
         let revision = selectionRevision
         do {
@@ -282,11 +363,17 @@ final class MonitorViewModel {
                 guard selectedKey == key, selectionRevision == revision else { return }
                 detail = process
             }
-            let pinnedQuery = try ProcessQuery(search: detail.map { String($0.pid) }, filter: .pinned, limit: 200)
-            let pins = try await service.listProcesses(pinnedQuery)
-            guard selectedKey == key, selectionRevision == revision else { return }
-            pinned = pins.items.contains { $0.processKey == key }
-            guard historyLeaseMessage.isEmpty else { return }
+            if query.filter == .pinned {
+                pinned = rows.contains { $0.processKey == key }
+            } else {
+                let pinnedQuery = try ProcessQuery(search: detail.map { String($0.pid) }, filter: .pinned, limit: 200)
+                let pins = try await service.listProcesses(pinnedQuery)
+                guard selectedKey == key, selectionRevision == revision else { return }
+                pinned = pins.items.contains { $0.processKey == key }
+            }
+            guard refreshHistory, historyLeaseMessage.isEmpty else { return }
+            historyCursor = nil
+            historySnapshotID = nil
             let series = try await service.history(HistoryRequest(series: [key.rawValue], since: Date().addingTimeInterval(-Double(policy.historyMinutes * 60))))
             guard selectedKey == key, selectionRevision == revision else { return }
             history = series.first { $0.series == key.rawValue }

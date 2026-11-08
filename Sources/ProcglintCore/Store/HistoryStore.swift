@@ -1,8 +1,23 @@
 import Foundation
 
+private struct HistoryCheckpoint: Codable {
+    var store: String
+    var buffer: String
+    var series: String
+    @JSONString var first: UInt64
+    @JSONString var next: UInt64
+    @JSONString var gap: UInt64
+    var open: Bool
+    var since: Date?
+    var until: Date?
+    @OptionalJSONString var fromTick: UInt64?
+    @OptionalJSONString var throughTick: UInt64?
+}
+
 public struct HistoryStore: Sendable {
     private struct TimedPoint: Sendable {
         var tick: UInt64
+        var sequence: UInt64
         var point: HistoryPoint
     }
 
@@ -13,6 +28,9 @@ public struct HistoryStore: Sendable {
     }
 
     private struct Buffer: Sendable {
+        var id = UUID().uuidString
+        var nextSequence: UInt64 = 0
+        var gapRevision: UInt64 = 0
         var points = BoundedRing<TimedPoint>(capacity: 600)
         var gaps = BoundedRing<TimedGap>(capacity: 600)
         var gapStart: Date?
@@ -27,6 +45,7 @@ public struct HistoryStore: Sendable {
     }
 
     private let clock: any MonotonicClock
+    private let storeID = UUID().uuidString
     private let wallNow: @Sendable () -> Date
     private var windowNS: UInt64
     private var maximumSeries: Int
@@ -116,10 +135,10 @@ public struct HistoryStore: Sendable {
         let cutoff = now > windowNS ? now - windowNS : 0
         let lowerTick = max(cutoff, fromTick ?? 0)
         let upperTick = min(now, throughTick ?? now)
-        let points = buffer.points.elements().filter {
+        let selected = buffer.points.elements().filter {
             $0.point.t >= (since ?? .distantPast) && $0.point.t <= (until ?? .distantFuture) &&
                 $0.tick >= lowerTick && $0.tick <= upperTick
-        }.map(\.point)
+        }
         var retainedGaps = buffer.gaps.elements()
         if let start = buffer.gapStart {
             retainedGaps.append(TimedGap(fromTick: buffer.gapStartTick, tick: now, gap: HistoryGap(from: start, to: wallNow())))
@@ -132,7 +151,17 @@ public struct HistoryStore: Sendable {
             let to = min(timed.gap.to.addingTimeInterval(-Double(timed.tick - upper) / 1_000_000_000), until ?? .distantFuture)
             return from <= to ? HistoryGap(from: from, to: to) : nil
         }
-        return HistorySeries(series: name, points: points, gaps: gaps)
+        let first = selected.first?.sequence ?? buffer.nextSequence
+        let next = selected.last.map { $0.sequence + 1 } ?? first
+        // A wall-date filter can select noncontiguous points after a clock adjustment; fall back to full history.
+        let cursor: String? = next - first == UInt64(selected.count)
+            ? try ProcglintJSON.encoder().encode(HistoryCheckpoint(
+                store: storeID, buffer: buffer.id, series: name, first: first, next: next,
+                gap: buffer.gapRevision, open: buffer.gapStart != nil, since: since, until: until,
+                fromTick: fromTick, throughTick: throughTick
+            )).base64EncodedString() : nil
+        return HistorySeries(series: name, points: selected.map(\.point), gaps: gaps,
+                             nextCursor: cursor, retainedPointCount: cursor.map { _ in selected.count })
     }
 
     public mutating func bytesEstimate() -> UInt64 {
@@ -183,11 +212,14 @@ public struct HistoryStore: Sendable {
             buffers[name]?.gapStart = nil
         }
         buffers[name]?.latestTick = tick
-        buffers[name]?.points.append(TimedPoint(tick: tick, point: point))
+        let sequence = buffers[name]?.nextSequence ?? 0
+        buffers[name]?.points.append(TimedPoint(tick: tick, sequence: sequence, point: point))
+        buffers[name]?.nextSequence += 1
     }
 
     private mutating func openGap(_ name: String, at date: Date) {
         guard buffers[name]?.gapStart == nil else { return }
+        buffers[name]?.gapRevision += 1
         let last = buffers[name]?.points.last
         let startTick = last?.tick ?? clock.now
         buffers[name]?.gapStart = last?.point.t ?? date
@@ -231,5 +263,33 @@ public struct HistoryStore: Sendable {
                 buffers.removeValue(forKey: name)
             }
         }
+    }
+}
+
+public extension HistorySeries {
+    /// A nil cursor preserves the legacy wire shape; empty/foreign/expired cursors request a full page.
+    func delta(after cursor: String?) -> HistorySeries {
+        var result = self
+        guard let cursor else {
+            result.nextCursor = nil
+            result.isDelta = false
+            result.retainedPointCount = nil
+            return result
+        }
+        let currentData = nextCursor.flatMap { Data(base64Encoded: $0) }
+        guard cursor.utf8.count <= 8192,
+              let previousData = Data(base64Encoded: cursor), let currentData,
+              let previous = try? ProcglintJSON.decoder().decode(HistoryCheckpoint.self, from: previousData),
+              let current = try? ProcglintJSON.decoder().decode(HistoryCheckpoint.self, from: currentData),
+              previous.store == current.store, previous.buffer == current.buffer, previous.series == current.series,
+              previous.since == current.since, previous.until == current.until,
+              previous.fromTick == current.fromTick, previous.throughTick == current.throughTick,
+              previous.gap == current.gap, !previous.open, !current.open,
+              current.first <= previous.next, previous.next <= current.next,
+              current.next - current.first == UInt64(points.count)
+        else { return result }
+        result.points = Array(points.dropFirst(Int(previous.next - current.first)))
+        result.isDelta = true
+        return result
     }
 }

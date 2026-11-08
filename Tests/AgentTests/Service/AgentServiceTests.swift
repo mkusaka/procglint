@@ -1,6 +1,6 @@
 import Foundation
 @testable import ProcglintAgentKit
-import ProcglintCore
+@testable import ProcglintCore
 import ProcglintIPC
 import Testing
 
@@ -109,6 +109,50 @@ struct AgentServiceTests {
         await first.invalidate()
         await second.invalidate()
         await third.invalidate()
+        await fixture.close()
+    }
+
+    @Test func historyCursorBatchesSeriesAndKeepsLegacyResponsesUnchanged() async throws {
+        let fixture = try ServiceFixture()
+        let gui = fixture.client(.gui)
+        let key = try fixture.key()
+        _ = try await gui.setLease(LeaseRequest(kind: .guiWindow, intervalMS: .fiveSeconds, processKeys: [key]))
+        fixture.clock.advance(by: 1_000_000_000)
+        _ = try await fixture.scheduler.freshSnapshot(maxAge: 0)
+        let selectors = ["system", key.rawValue]
+        let full = try await gui.history(HistoryRequest(series: selectors, cursor: ""))
+        #expect(full.count == 2)
+        let cursor = try #require(full.first?.nextCursor)
+        #expect(full.last?.nextCursor == cursor)
+        fixture.clock.advance(by: 1_000_000_000)
+        _ = try await fixture.scheduler.freshSnapshot(maxAge: 0)
+        let delta = try await gui.history(HistoryRequest(series: selectors, cursor: cursor))
+        #expect(delta.allSatisfy { $0.isDelta && $0.points.count == 1 })
+        let legacy = try await gui.history(HistoryRequest(series: selectors))
+        #expect(legacy.allSatisfy { $0.nextCursor == nil && !$0.isDelta && $0.retainedPointCount == nil })
+        await expectAgentError(.invalidArgument) {
+            _ = try await gui.history(HistoryRequest(series: selectors, cursor: String(repeating: "x", count: 65537)))
+        }
+        let reset = try await gui.history(HistoryRequest(series: selectors, cursor: "unknown"))
+        #expect(reset.allSatisfy { !$0.isDelta })
+        let overlapping = try await gui.history(HistoryRequest(series: ["system", "system"], cursor: cursor))
+        #expect(overlapping.allSatisfy { $0.nextCursor == nil })
+        await gui.invalidate()
+        await fixture.close()
+    }
+
+    @Test func threeSnapshotPollersHitOneScopedResponseCache() async throws {
+        let fixture = try ServiceFixture()
+        let clients = (0 ..< 3).map { _ in fixture.client(flags: nil) }
+        for client in clients {
+            let snapshot = try await client.snapshot(top: 50, sort: .cpu)
+            #expect(!snapshot.processes.contains { !$0.isOwn })
+            #expect(await fixture.scheduler.responseCacheCount == 1)
+        }
+        #expect(await fixture.scheduler.diagnostics().collectionsTotal == 1)
+        for client in clients {
+            await client.invalidate()
+        }
         await fixture.close()
     }
 

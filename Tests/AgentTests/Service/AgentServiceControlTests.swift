@@ -168,6 +168,23 @@ struct AgentServiceControlTests {
         await fixture.close()
     }
 
+    @Test func idleConnectionsUseOneHousekeepingDeadlinePerMinute() async throws {
+        let fixture = try ServiceFixture()
+        await fixture.service.start()
+        #expect(await fixture.service.housekeepingDeadline == 60_000_000_000)
+        let context = await fixture.connect(id: "idle-client", pid: 800, kind: .gui)
+        #expect(await fixture.service.housekeepingDeadline == 60_000_000_000)
+        let response = try await fixture.service.handle(.setLease(LeaseRequest(kind: .guiWindow, intervalMS: .fiveSeconds)), from: context)
+        guard case let .setLease(lease) = response else { Issue.record("Expected lease"); return }
+        #expect(await fixture.service.housekeepingDeadline == 5_000_000_000)
+        _ = await fixture.service.handle(.releaseLease(id: lease.leaseID), from: context)
+        #expect(await fixture.service.housekeepingDeadline == 60_000_000_000)
+        fixture.clock.advance(by: 9_000_000_000)
+        await fixture.service.clientDisconnected(context)
+        #expect(await fixture.service.housekeepingDeadline == 69_000_000_000)
+        await fixture.close()
+    }
+
     @Test func idleExitUsesMonotonicGraceAndConnectedClientsPreventExit() async throws {
         let fixture = try ServiceFixture()
         await fixture.service.start()

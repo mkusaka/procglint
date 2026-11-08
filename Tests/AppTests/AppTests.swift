@@ -92,7 +92,7 @@ func preferences() -> AppPreferences {
     #expect(model.totalMatched == 1)
     #expect(model.selectedKey == process.processKey)
     #expect(model.detail?.processKey == process.processKey)
-    #expect(service.queries.count == queries)
+    #expect(service.queries.count == queries + 1)
     service.current = snapshot(id: "recovered")
     await model.tick()
     await model.selectionUpdate?.value
@@ -117,7 +117,7 @@ func preferences() -> AppPreferences {
     let expected = try ProcessQuery(search: "42", filter: .mine, sort: .footprint, order: .asc, limit: 200,
                                     fields: ProcessField.allCases.filter { $0 != .path })
     #expect(service.queries == [expected])
-    #expect(service.snapshotCalls == 1)
+    #expect(service.snapshotCalls == 0)
     model.setSearch(" Worker ")
     model.setFilter(.pinned)
     model.setSort(column: .cpuTime, ascending: false)
@@ -145,7 +145,7 @@ func preferences() -> AppPreferences {
     #expect(service.leaseRequests.last?.intervalMS == .fiveSeconds)
     #expect(model.pollingInterval == 5)
     await model.tick()
-    #expect(service.leaseRequests.count == 2)
+    #expect(service.leaseRequests.count == 1)
     await model.setVisibility(window: true, menuBar: true)
     #expect(service.leaseRequests.last?.kind == .menuBar)
     #expect(model.pollingInterval == 5)
@@ -169,7 +169,7 @@ func preferences() -> AppPreferences {
     await model.setVisibility(window: true, menuBar: true)
     service.current = snapshot(instance: "agent-b")
     await model.tick()
-    #expect(service.leaseRequests.count == 6)
+    #expect(service.leaseRequests.count == 4)
     service.snapshotError = .agentUnavailable("disconnected")
     await model.tick()
     #expect(model.summary.contains("unavailable"))
@@ -188,16 +188,17 @@ func preferences() -> AppPreferences {
     let service = try FakeMonitorService()
     let model = try MonitorViewModel(service: service, preferences: prefs)
     let gate = RequestGate()
-    service.beforeSnapshot = { await gate.suspend() }
+    service.beforeList = { await gate.suspend() }
     let fetching = Task { await model.setVisibility(window: true, menuBar: false) }
     await gate.waitUntilEntered()
     await model.tick()
     await model.setVisibility(window: false, menuBar: false)
-    #expect(service.snapshotCalls == 1)
+    #expect(service.snapshotCalls == 0)
+    #expect(service.queries.count == 1)
     gate.resume()
     await fetching.value
     #expect(service.released == ["gui_window"])
-    #expect(service.queries.isEmpty)
+    #expect(model.rows.isEmpty)
 }
 
 @MainActor

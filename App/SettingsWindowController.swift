@@ -7,6 +7,7 @@ final class SettingsWindowController: NSWindowController {
     let interval = NSPopUpButton()
     let history = NSPopUpButton()
     let menuBar = NSButton(checkboxWithTitle: "Show CPU and memory in the menu bar", target: nil, action: nil)
+    let adaptiveRefresh = NSButton(checkboxWithTitle: "Slow refresh when the main window is not focused", target: nil, action: nil)
     let registration = NSTextField(wrappingLabelWithString: "")
     let diagnostics = NSTextView()
     let feedback = NSTextField(wrappingLabelWithString: "")
@@ -14,6 +15,7 @@ final class SettingsWindowController: NSWindowController {
     private let unregisterAgent: @MainActor () async throws -> Void
     private let openLoginItems: @MainActor () -> Void
     var menuBarChanged: (@MainActor () -> Void)?
+    var adaptiveRefreshChanged: (@MainActor () -> Void)?
 
     init(model: SettingsViewModel, unregisterAgent: @escaping @MainActor () async throws -> Void,
          openLoginItems: @escaping @MainActor () -> Void)
@@ -40,6 +42,10 @@ final class SettingsWindowController: NSWindowController {
         let copy = NSButton(title: "Copy MCP config", target: self, action: #selector(copyConfiguration))
         copy.setAccessibilityIdentifier("copyMCPConfig")
         menuBar.setAccessibilityIdentifier("menuBarToggle")
+        adaptiveRefresh.setAccessibilityIdentifier("adaptiveRefreshToggle")
+        adaptiveRefresh.toolTip = "Uses the next slower update interval, up to 10 seconds, while the visible main window is not active and key. Hidden windows stop their lease."
+        adaptiveRefresh.target = self
+        adaptiveRefresh.action = #selector(toggleAdaptiveRefresh)
         feedback.setAccessibilityIdentifier("settingsFeedback")
         let refresh = NSButton(title: "Refresh diagnostics", target: self, action: #selector(refreshDiagnostics))
         menuBar.target = self
@@ -65,7 +71,7 @@ final class SettingsWindowController: NSWindowController {
         diagnosticScroll.heightAnchor.constraint(equalToConstant: 180).isActive = true
         let stack = verticalStack([
             NSStackView(views: [NSTextField(labelWithString: "Update interval"), interval, NSTextField(labelWithString: "History"), history, apply]),
-            menuBar, registration, NSStackView(views: [register, unregister, loginItems]), NSTextField(labelWithString: "MCP permissions"),
+            menuBar, adaptiveRefresh, registration, NSStackView(views: [register, unregister, loginItems]), NSTextField(labelWithString: "MCP permissions"),
         ] + permissionViews + [note, copy, refresh, diagnosticScroll, feedback])
         for view in [registration, note, diagnosticScroll, feedback] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -84,6 +90,7 @@ final class SettingsWindowController: NSWindowController {
         interval.selectItem(at: SamplingInterval.allCases.firstIndex(of: model.policy.guiIntervalMS) ?? 2)
         history.selectItem(at: model.policy.historyMinutes - 1)
         menuBar.state = model.preferences.menuBar ? .on : .off
+        adaptiveRefresh.state = model.preferences.adaptiveRefresh ? .on : .off
         registration.stringValue = "Agent registration: \(model.registrationStatus())"
         for (permission, button) in permissionButtons {
             button.state = model.permissions.contains(permission) ? .on : .off
@@ -101,6 +108,11 @@ final class SettingsWindowController: NSWindowController {
     @objc private func toggleMenuBar() {
         model.preferences.menuBar = menuBar.state == .on
         menuBarChanged?()
+    }
+
+    @objc private func toggleAdaptiveRefresh() {
+        model.preferences.adaptiveRefresh = adaptiveRefresh.state == .on
+        adaptiveRefreshChanged?()
     }
 
     @objc private func togglePermission(_ sender: NSButton) {

@@ -130,6 +130,7 @@ Never exposed: command-line arguments, environment, process memory.
 - Limits (defaults): 10 minutes window, 600 points per series, 16 process series per agent. To reserve slots, evict ownerless process series oldest-last-tracked first; active ownership exceeding the limit → `history_limit_reached`.
 - `HistoryPoint`: `t` (date), `cpu_percent`, `footprint_bytes`, `disk_read_bps`, `disk_write_bps` (Metric each; system uses `cpu_percent`, `memory_used_bytes`).
 - `HistorySeries`: `series` (`"system"` or a process_key), `points`, `gaps: [{from, to}]` — intervals where sampling was stopped or the process was not tracked. Charts draw no line across a gap. History never backfills unobserved time.
+- Cursor responses add `next_cursor?`, `is_delta` (default false) and `retained_point_count?` (0…600). A delta carries only new points and replaces the cached gap list; the client appends and keeps the last `retained_point_count` points. A full response replaces the cached series. Cursors bind to the store/buffer generation, series, query bounds and gap revision; agent restart, eviction of unseen points, buffer recreation, gap changes, overlapping or noncontiguous selections fall back to full data. Cursors are not authorization. MCP `get_history` is unchanged.
 
 ## Leases and the scheduler
 
@@ -159,7 +160,7 @@ Rules:
 
 Policy defaults: GUI window 5000 ms (choices 1/2/5/10 s), menu bar 10000 ms.
 
-`SamplingPolicy`: `revision` (int), `gui_interval_ms`, `menu_bar_interval_ms`, `history_minutes` (1…10), `max_process_series` (1…16). `set_sampling_policy` requires `expected_revision`; mismatch → `revision_conflict`.
+`SamplingPolicy`: `revision` (int), `gui_interval_ms`, `menu_bar_interval_ms`, `history_minutes` (1…10), `max_process_series` (1…16). `set_sampling_policy` requires `expected_revision`; mismatch → `revision_conflict`. `gui_interval_ms` is the foreground interval; the GUI's local adaptive-refresh preference (default on) requests the next slower allowed interval (cap 10 s) while the main window is visible but unfocused, after a 1 s debounce. Hidden, occluded or minimised windows hold no window lease.
 
 ## Observations (MCP)
 
@@ -218,7 +219,7 @@ public protocol MonitorService: Sendable {
 }
 ```
 
-`HistoryRequest`: `series` (`system`, process keys, or `observation_id`), `since?` (date).
+`HistoryRequest`: `series` (`system`, process keys, or `observation_id`), `since?` (date), `cursor?` (opaque string, ≤64 KiB, else `invalid_argument`). Omitted cursor → the legacy full response with no cursor fields. Empty or unknown cursor → full response with checkpoints. One cursor covers the whole selector batch.
 
 ## XPC
 

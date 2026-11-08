@@ -3,7 +3,9 @@
 #include <limits.h>
 #include <libproc.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/sysctl.h>
+#include <sys/proc.h>
 
 int pg_list_pids(int32_t *buffer, int capacity, int *count) {
     if (capacity < 0 || capacity > INT_MAX / (int)sizeof(int32_t)) return EINVAL;
@@ -12,6 +14,51 @@ int pg_list_pids(int32_t *buffer, int capacity, int *count) {
     if (result <= 0) return errno ? errno : EIO;
     *count = result;
     return 0;
+}
+
+int pg_census(pg_census_buffer *buffer, int *count) {
+    int mib[] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+    for (int attempt = 0; attempt <= 4; ++attempt) {
+        if (!buffer->storage) {
+            size_t needed = 0;
+            if (sysctl(mib, 4, NULL, &needed, NULL, 0) != 0) return errno;
+            if (needed > (SIZE_MAX - sizeof(struct kinfo_proc)) / 5 * 4) return ENOMEM;
+            needed += needed / 4 + sizeof(struct kinfo_proc);
+            buffer->storage = malloc(needed);
+            if (!buffer->storage) return ENOMEM;
+            buffer->capacity = needed;
+        }
+        size_t size = buffer->capacity;
+        if (sysctl(mib, 4, buffer->storage, &size, NULL, 0) == 0) {
+            if (size == 0 || size % sizeof(struct kinfo_proc) != 0 || size / sizeof(struct kinfo_proc) > INT_MAX) return EIO;
+            *count = (int)(size / sizeof(struct kinfo_proc));
+            return 0;
+        }
+        if (errno != ENOMEM) return errno;
+        // Population growth invalidates the size estimate, not the whole sweep.
+        pg_census_free(buffer);
+    }
+    return ENOMEM;
+}
+
+int pg_census_get(const pg_census_buffer *buffer, int index, pg_census_entry *entry) {
+    const struct kinfo_proc *process = &((const struct kinfo_proc *)buffer->storage)[index];
+    if (process->kp_proc.p_stat == SZOMB) return 0;
+    memset(entry, 0, sizeof(*entry));
+    entry->pid = process->kp_proc.p_pid;
+    memcpy(entry->bsd.name, process->kp_proc.p_comm, sizeof(process->kp_proc.p_comm));
+    entry->bsd.uid = process->kp_eproc.e_ucred.cr_uid;
+    entry->bsd.ppid = process->kp_eproc.e_ppid;
+    struct timeval start = process->kp_proc.p_starttime;
+    entry->bsd.start_time_us = (uint64_t)start.tv_sec * 1000000 + start.tv_usec;
+    entry->bsd.has_start_time = 1;
+    return 1;
+}
+
+void pg_census_free(pg_census_buffer *buffer) {
+    free(buffer->storage);
+    buffer->storage = NULL;
+    buffer->capacity = 0;
 }
 
 int pg_rusage(int32_t pid, struct rusage_info_v2 *usage) {

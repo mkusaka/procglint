@@ -58,6 +58,12 @@ def shared_collections(counts, seconds):
     return counts[2] <= counts[1] + 1 and all(lower <= count <= upper for count in counts)
 
 
+def cpu_budgets(lease_only, one_mcp):
+    # No GUI is measured: the one-MCP sum is a lower bound on the complete 1.3% budget.
+    return (lease_only['agent_cpu'] <= 0.3,
+            one_mcp['agent_cpu'] + one_mcp['bridge_cpu'] <= 1.3)
+
+
 def idle_stopped(row):
     # The >=10 s idle window outlives the 5 s cache; the ending status must account for exactly one collection.
     return (row["idle_new_history_points"] == 0 and row["collections"] == 1
@@ -240,10 +246,15 @@ def run(args):
         stopped = idle_stopped(idle)
         print(f"\nShared-collection check: {'PASS' if shared else 'FAIL'} (0/1/3 MCP deltas {counts}).")
         print(f"Idle-periodic check: {'PASS' if stopped else 'FAIL'} ({idle['idle_new_history_points']} new history points BEFORE final status; status-inclusive Δ={idle['collections']}).")
-        cpu_ok = all(row['agent_cpu'] <= 0.3 for row in results[:3])
+        agent_ok, one_mcp_ok = cpu_budgets(results[0], results[1])
+        cpu_ok = agent_ok and one_mcp_ok
         memory_ok = all(value <= 30 for row in results for value in row['bridge_footprint_mib'])
         collection_ok = all(row['final']['collection_p95_ms'] <= 40 for row in results[:3])
-        print(f"Agent CPU ≤0.3% (all active cases): {'PASS' if cpu_ok else 'FAIL'}.")
+        print(f"Lease-only agent CPU ≤0.3%: {'PASS' if agent_ok else 'FAIL'}.")
+        one_mcp_cpu = results[1]['agent_cpu'] + results[1]['bridge_cpu']
+        three_mcp_cpu = results[2]['agent_cpu'] + results[2]['bridge_cpu']
+        print(f"1 MCP measured agent+MCP CPU {one_mcp_cpu:.3f}% ≤1.3%: {'PASS (measured components only)' if one_mcp_ok else 'FAIL (even the lower bound exceeds budget)'}. GUI+agent+MCP acceptance is NOT VERIFIED without GUI data.")
+        print(f"3 MCP measured agent+MCP CPU {three_mcp_cpu:.3f}%: no numeric CPU budget is specified; the shared-collection, bridge-footprint, and collection-latency checks apply.")
         print(f"Bridge footprint ≤30 MiB each: {'PASS' if memory_ok else 'FAIL'}.")
         print(f"Agent rolling collection p95 ≤40 ms: {'PASS' if collection_ok else 'FAIL'} (diagnostic includes warm-up; not a per-window percentile).")
         print("GUI combined CPU/footprint and main-thread p95: NOT MEASURED. Compare process population/conditions before claiming budget acceptance.")
@@ -272,6 +283,11 @@ class SelfTests(unittest.TestCase):
         before = {1: dict(cpu_seconds=5), 2: dict(cpu_seconds=10)}
         after = {1: dict(cpu_seconds=5.2), 2: dict(cpu_seconds=10.1)}
         self.assertAlmostEqual(window_cpu(before, after, [1, 2], 100), 0.3)
+
+    def test_cpu_budgets_are_condition_specific(self):
+        self.assertEqual(cpu_budgets(dict(agent_cpu=0.3), dict(agent_cpu=0.6, bridge_cpu=0.6)), (True, True))
+        self.assertEqual(cpu_budgets(dict(agent_cpu=0.31), dict(agent_cpu=0.4, bridge_cpu=0.5)), (False, True))
+        self.assertEqual(cpu_budgets(dict(agent_cpu=0.1), dict(agent_cpu=0.8, bridge_cpu=0.6)), (True, False))
 
     def test_collection_budget(self):
         self.assertTrue(shared_collections([24, 24, 25], 120))

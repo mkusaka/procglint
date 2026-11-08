@@ -55,6 +55,7 @@ public actor AgentService: AgentRequestHandler {
     private var previousUptime: UInt64
     private var housekeepingTask: Task<Void, Never>?
     private var housekeepingGeneration: UInt64 = 0
+    private(set) var housekeepingDeadline: UInt64?
     private var stopped = false
 
     public init(sampler: Sampler, scheduler: SamplingScheduler, observations: ObservationManager,
@@ -86,8 +87,8 @@ public actor AgentService: AgentRequestHandler {
 
     deinit { housekeepingTask?.cancel() }
 
-    public func start() {
-        replanHousekeeping()
+    public func start() async {
+        await replanHousekeeping()
     }
 
     public func shutdown() async {
@@ -104,8 +105,8 @@ public actor AgentService: AgentRequestHandler {
         guard !stopped, client.uid == agentUID, client.pid > 0, clients[client.clientID] == nil else { return }
         clients[client.clientID] = Session(context: client)
         idleSince = nil
-        replanHousekeeping()
         await scheduler.clientConnected(client.clientID)
+        await replanHousekeeping()
     }
 
     public func clientDisconnected(_ client: ClientContext) async {
@@ -116,11 +117,13 @@ public actor AgentService: AgentRequestHandler {
             idleSince = clock.now
         }
         await observations.clientDisconnected(client.clientID)
-        replanHousekeeping()
+        await replanHousekeeping()
     }
 
     public func handle(_ request: AgentRequest, from client: ClientContext) async -> AgentResponse {
         do {
+            try requireClient(client)
+            await housekeeping()
             try requireClient(client)
             if case let .hello(hello) = request {
                 guard clients[client.clientID]?.hello == nil, !hello.version.isEmpty, hello.version.utf8.count <= 64 else {
@@ -139,6 +142,11 @@ public actor AgentService: AgentRequestHandler {
                 try mutations.take(at: clock.now)
             }
             let response = try await respond(to: request, client: client, hello: hello, permissions: permissions)
+            switch request {
+            case .setLease, .releaseLease, .startObservation, .stopObservation:
+                await replanHousekeeping()
+            default: break
+            }
             guard clients[client.clientID]?.context == client else {
                 // An operation suspended on another actor may have installed a lease after disconnect cleanup.
                 await observations.clientDisconnected(client.clientID)
@@ -355,6 +363,10 @@ public actor AgentService: AgentRequestHandler {
 
     private func history(_ request: HistoryRequest, client: ClientContext, scope: AccessScope) async throws -> [HistorySeries] {
         guard !request.series.isEmpty, request.series.count <= 17 else { throw AgentError.invalidArgument("Request 1...17 history series") }
+        guard (request.cursor?.utf8.count ?? 0) <= 65536 else { throw AgentError.invalidArgument("History cursor exceeds 64 KiB") }
+        let checkpoints = request.cursor.flatMap { Data(base64Encoded: $0) }.flatMap {
+            try? ProcglintJSON.decoder().decode([String: String].self, from: $0)
+        } ?? [:]
         var result: [HistorySeries] = []
         for selector in request.series {
             if selector == "system" {
@@ -367,6 +379,20 @@ public actor AgentService: AgentRequestHandler {
                 let observation = try await observations.observation(id: selector, clientID: client.clientID)
                 _ = try await visibleSamples(observation.processKeys, scope: scope, retainedHistory: true)
                 try await result.append(contentsOf: observations.history(id: selector, clientID: client.clientID, since: request.since))
+            }
+        }
+        // Overlapping observation/series selectors cannot share one per-series checkpoint unambiguously.
+        if Set(result.map(\.series)).count != result.count {
+            return result.map { $0.delta(after: nil) }
+        }
+        result = result.map { series in
+            series.delta(after: request.cursor.map { _ in checkpoints[series.series] ?? "" })
+        }
+        if request.cursor != nil {
+            let next = Dictionary(result.compactMap { series in series.nextCursor.map { (series.series, $0) } }, uniquingKeysWith: { _, last in last })
+            let cursor = try ProcglintJSON.encoder().encode(next).base64EncodedString()
+            for index in result.indices where result[index].nextCursor != nil {
+                result[index].nextCursor = cursor
             }
         }
         return result
@@ -481,13 +507,19 @@ public actor AgentService: AgentRequestHandler {
         }
     }
 
-    private func replanHousekeeping() {
+    private func replanHousekeeping() async {
         housekeepingTask?.cancel()
         housekeepingTask = nil
+        housekeepingDeadline = nil
         housekeepingGeneration += 1
         guard !stopped else { return }
         let generation = housekeepingGeneration
-        let deadline = clients.isEmpty ? (idleSince ?? clock.now) + 60_000_000_000 : clock.now + 5_000_000_000
+        let active = await scheduler.effectiveInterval != nil
+        guard generation == housekeepingGeneration, !stopped else { return }
+        // Idle connections do not justify twelve drift checks a minute; no-client exit is one deadline.
+        let delay: UInt64 = active ? 5_000_000_000 : 60_000_000_000
+        let deadline = clients.isEmpty ? (idleSince ?? clock.now) + 60_000_000_000 : clock.now + delay
+        housekeepingDeadline = deadline
         let clock = clock
         housekeepingTask = Task(priority: .background) { [weak self] in
             do {
@@ -502,7 +534,7 @@ public actor AgentService: AgentRequestHandler {
         guard generation == housekeepingGeneration else { return }
         await housekeeping()
         if generation == housekeepingGeneration {
-            replanHousekeeping()
+            await replanHousekeeping()
         }
     }
 }

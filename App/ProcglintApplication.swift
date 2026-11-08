@@ -55,8 +55,7 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
     }
 
     public func agentDidReconnect() async {
-        // A tick renews visible leases without replaying failed mutations.
-        await model.tick()
+        await model.agentDidReconnect()
     }
 
     public func applicationDidFinishLaunching(_: Notification) {
@@ -64,6 +63,7 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
         let main = MainWindowController(model: model)
         mainWindow = main
         main.visibilityChanged = { [weak self] in self?.updateVisibility() }
+        main.focusChanged = { [weak self] in self?.updateFocus() }
         syncMenuBar()
         openMainWindow()
     }
@@ -79,6 +79,14 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
     public func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
         openMainWindow()
         return true
+    }
+
+    public func applicationDidBecomeActive(_: Notification) {
+        updateFocus()
+    }
+
+    public func applicationDidResignActive(_: Notification) {
+        updateFocus()
     }
 
     public func applicationDidHide(_: Notification) {
@@ -109,6 +117,10 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
         if settingsWindow == nil {
             let settings = SettingsWindowController(model: settingsModel, unregisterAgent: unregisterAgent, openLoginItems: openLoginItems)
             settings.menuBarChanged = { [weak self] in self?.syncMenuBar() }
+            settings.adaptiveRefreshChanged = { [weak self] in
+                guard let self else { return }
+                Task { await self.model.tick() }
+            }
             settingsWindow = settings
         }
         settingsWindow?.showWindow(nil)
@@ -172,7 +184,12 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
         updateVisibility()
     }
 
+    private func updateFocus() {
+        model.setFocus(appActive: NSApp.isActive, keyWindow: mainWindow?.window?.isKeyWindow == true)
+    }
+
     private func updateVisibility() {
+        updateFocus()
         let visible = !NSApp.isHidden && mainWindow?.monitoringVisible == true
         let menuVisible = statusItem != nil
         Task { await model.setVisibility(window: visible, menuBar: menuVisible) }

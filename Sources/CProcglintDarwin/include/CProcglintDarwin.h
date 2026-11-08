@@ -19,6 +19,22 @@ typedef struct {
 } pg_bsd_info;
 
 int pg_bsd(int32_t pid, pg_bsd_info *info);
+
+typedef struct {
+    void *storage;
+    size_t capacity;
+} pg_census_buffer;
+
+typedef struct {
+    int32_t pid;
+    pg_bsd_info bsd;
+} pg_census_entry;
+
+int pg_census(pg_census_buffer *buffer, int *count);
+// Returns zero for zombies, one for a live entry.
+int pg_census_get(const pg_census_buffer *buffer, int index, pg_census_entry *entry);
+void pg_census_free(pg_census_buffer *buffer);
+
 int pg_path(int32_t pid, char *buffer, uint32_t capacity);
 
 typedef struct {

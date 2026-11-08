@@ -10,6 +10,10 @@ public struct SnapshotStore: Sendable {
     private struct CacheKey: Hashable {
         var snapshotID: String
         var scope: AccessScope
+        var sort: ProcessSort
+        var order: SortOrder
+        var filter: ProcessFilter
+        var pins: Set<ProcessKey>
     }
 
     private struct Cursor: Codable {
@@ -34,6 +38,7 @@ public struct SnapshotStore: Sendable {
     private var entries: [Entry] = []
     private var cache: [CacheKey: [ProcessSample]] = [:]
     private var cacheOrder: [CacheKey] = []
+    private(set) var querySortCount = 0
 
     public init(clock: any MonotonicClock) {
         self.clock = clock
@@ -57,9 +62,8 @@ public struct SnapshotStore: Sendable {
         if entries.count > 2 {
             entries.removeFirst()
         }
-        let retained = Set(entries.map(\.snapshot.snapshotID))
-        cache = cache.filter { retained.contains($0.key.snapshotID) }
-        cacheOrder.removeAll { !retained.contains($0.snapshotID) }
+        cache.removeAll(keepingCapacity: true)
+        cacheOrder.removeAll(keepingCapacity: true)
     }
 
     public func latest(scope: AccessScope = AccessScope(), effectiveInterval: SamplingInterval? = nil) -> Snapshot? {
@@ -96,12 +100,16 @@ public struct SnapshotStore: Sendable {
             guard let latest = entries.last else { throw AgentError.agentUnavailable("No snapshot collected") }
             entry = latest
         }
-        let key = CacheKey(snapshotID: entry.snapshot.snapshotID, scope: scope)
+        let key = CacheKey(snapshotID: entry.snapshot.snapshotID, scope: scope, sort: query.sort,
+                           order: query.order, filter: query.filter, pins: Set(pins))
         let processes: [ProcessSample]
         if let cached = cache[key] {
             processes = cached
         } else {
-            processes = scoped(entry.snapshot.processes, scope: scope)
+            processes = scoped(entry.snapshot.processes, scope: scope).filter {
+                (query.filter != .mine || $0.isOwn) && (query.filter != .pinned || pinned.contains($0.processKey))
+            }.sorted { precedes($0, $1, sort: query.sort, order: query.order) }
+            querySortCount += 1
             if cacheOrder.count == 8 {
                 cache.removeValue(forKey: cacheOrder.removeFirst())
             }
@@ -109,14 +117,12 @@ public struct SnapshotStore: Sendable {
             cacheOrder.append(key)
         }
         let matches = processes.filter { process in
-            guard query.filter != .mine || process.isOwn,
-                  query.filter != .pinned || pinned.contains(process.processKey) else { return false }
             guard let search = query.search, !search.isEmpty else { return true }
             if search.utf8.allSatisfy({ (48 ... 57).contains($0) }) {
                 return Int32(search) == process.pid
             }
             return process.name.range(of: search, options: .caseInsensitive) != nil
-        }.sorted { precedes($0, $1, sort: query.sort, order: query.order) }
+        }
         guard offset <= matches.count else { throw AgentError.invalidCursor("Cursor offset is out of range") }
         let end = min(offset + query.limit, matches.count)
         let next: String? = if end < matches.count {

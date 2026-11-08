@@ -3,9 +3,10 @@ import Darwin
 import Foundation
 import Synchronization
 
-public final class DarwinProcessSource: ProcessSource {
+public final class DarwinProcessSource: SamplingProcessSource {
     private struct Buffers {
         var pids: [Int32] = []
+        var census = pg_census_buffer()
         var path = [CChar](repeating: 0, count: 4096)
     }
 
@@ -36,6 +37,25 @@ public final class DarwinProcessSource: ProcessSource {
         self.bootID = bootID
     }
 
+    deinit {
+        buffers.withLock { pg_census_free(&$0.census) }
+    }
+
+    func processCensus() throws -> [SamplingProcess] {
+        try buffers.withLock { buffers in
+            var count: Int32 = 0
+            guard pg_census(&buffers.census, &count) == 0 else { throw ProcessSourceError.enumerationFailed }
+            var result: [SamplingProcess] = []
+            result.reserveCapacity(Int(count))
+            for index in 0 ..< count {
+                var entry = pg_census_entry()
+                guard pg_census_get(&buffers.census, index, &entry) != 0 else { continue }
+                result.append(SamplingProcess(pid: entry.pid, bsd: Self.bsd(entry.bsd, pid: entry.pid)))
+            }
+            return result
+        }
+    }
+
     public func listPIDs() throws -> [Int32] {
         try buffers.withLock { buffers in
             var count: Int32 = 0
@@ -63,18 +83,24 @@ public final class DarwinProcessSource: ProcessSource {
     }
 
     public func rusage(pid: Int32) throws -> RawRusage? {
+        var reading = try samplingUsage(pid: pid, startTimeUS: 0).usage
+        // Control/path callers retain the post-counter BSD check; only sweeps use cached raw stamps.
+        reading.startTimeUS = try readBSD(pid: pid).startTimeUS
+        return reading
+    }
+
+    func samplingUsage(pid: Int32, startTimeUS: UInt64) throws -> SamplingUsage {
         var usage = rusage_info_v2()
         try Self.checkPOSIX(pg_rusage(pid, &usage))
-        // Identity-sensitive callers compare their pre-counter BSD read with this post-counter identity.
-        let after = try readBSD(pid: pid)
+        guard usage.ri_proc_start_abstime != 0 else { throw ProcessSourceError.exited }
         let (ticks, overflow) = usage.ri_user_time.addingReportingOverflow(usage.ri_system_time)
         guard !overflow else { throw ProcessSourceError.unavailable("CPU counter overflow") }
-        return try RawRusage(
+        return try SamplingUsage(usage: RawRusage(
             cpuTimeNS: nanoseconds(fromMachTicks: ticks),
             footprintBytes: usage.ri_phys_footprint, rssBytes: usage.ri_resident_size,
             diskReadBytes: usage.ri_diskio_bytesread, diskWrittenBytes: usage.ri_diskio_byteswritten,
-            startTimeUS: after.startTimeUS, executableUUID: UUID(uuid: usage.ri_uuid)
-        )
+            startTimeUS: startTimeUS, executableUUID: UUID(uuid: usage.ri_uuid)
+        ), startAbstime: usage.ri_proc_start_abstime)
     }
 
     public func bsdInfo(pid: Int32) throws -> RawBSDInfo? {
@@ -86,6 +112,10 @@ public final class DarwinProcessSource: ProcessSource {
         try Self.checkPOSIX(pg_bsd(pid, &info))
         // Short BSD info cannot establish a safe identity; never invent a start timestamp.
         guard info.has_start_time != 0 else { throw ProcessSourceError.permissionDenied }
+        return Self.bsd(info, pid: pid)
+    }
+
+    private static func bsd(_ info: pg_bsd_info, pid: Int32) -> RawBSDInfo {
         let name = withUnsafeBytes(of: info.name) { bytes in
             String(bytes: bytes.prefix(while: { $0 != 0 }), encoding: .utf8) ?? "pid \(pid)"
         }

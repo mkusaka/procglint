@@ -5,6 +5,7 @@ public enum AppSettingsKeys {
     public static let policy = "procglint.sampling_policy"
     public static let permissions = "procglint.allowed_permissions"
     public static let menuBar = "procglint.menu_bar"
+    public static let adaptiveRefresh = "procglint.adaptive_refresh"
     public static let columns = "procglint.optional_columns"
 }
 
