@@ -1,0 +1,139 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version X.Y.Z (major 0–9999, minor/patch 0–99, no leading zeroes)'
+        required: true
+        type: string
+concurrency:
+  # The called Test workflow has its own concurrency group.
+  group: ${{ github.workflow }}-caller-${{ github.ref }}
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  test:
+    name: Test
+    uses: ./.github/workflows/test.yml
+    permissions: {}
+  release:
+    name: Build & Release
+    needs: test
+    if: github.actor == 'mkusaka'
+    runs-on: macos-26
+    timeout-minutes: 90
+    environment: release
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: write
+    env:
+      SIGNING: ${{ vars.RELEASE_SIGNING == 'adhoc' && 'adhoc' || 'developer-id' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate version
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            VERSION="$DISPATCH_VERSION"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)$ ]]; then
+            echo '::error::Version must be X.Y.Z: major 0–9999, minor/patch 0–99, no leading zeroes.'
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Install signing assets
+        if: env.SIGNING == 'developer-id'
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APPLE_APP_STORE_CONNECT_API_KEY_BASE64 }}
+          APPLE_APP_STORE_CONNECT_KEY_ID: ${{ secrets.APPLE_APP_STORE_CONNECT_KEY_ID }}
+          APPLE_APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APPLE_APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          for variable in APPLE_DEVELOPER_ID_P12_BASE64 APPLE_DEVELOPER_ID_P12_PASSWORD APPLE_KEYCHAIN_PASSWORD \
+            APPLE_APP_STORE_CONNECT_API_KEY_BASE64 APPLE_APP_STORE_CONNECT_KEY_ID APPLE_APP_STORE_CONNECT_ISSUER_ID; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Missing required secret: $variable"
+              exit 1
+            fi
+          done
+          umask 077
+          KEYCHAIN_PATH="$RUNNER_TEMP/procglint-signing.keychain-db"
+          P12_PATH="$RUNNER_TEMP/procglint-developer-id.p12"
+          KEY_PATH="$RUNNER_TEMP/procglint-notary-key.p8"
+          printf '%s' "$APPLE_DEVELOPER_ID_P12_BASE64" | base64 --decode > "$P12_PATH"
+          printf '%s' "$APPLE_APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$KEY_PATH"
+          security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$P12_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" \
+            -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$APPLE_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" > /dev/null
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+      - name: Build Developer ID release and notarize
+        if: env.SIGNING == 'developer-id'
+        env:
+          APP_STORE_CONNECT_KEY_PATH: ${{ runner.temp }}/procglint-notary-key.p8
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APPLE_APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APPLE_APP_STORE_CONNECT_ISSUER_ID }}
+        run: scripts/release.sh --version "$VERSION" --sign "Developer ID Application" --notarize
+      - name: Build ad-hoc release
+        if: env.SIGNING == 'adhoc'
+        run: scripts/release.sh --version "$VERSION" --sign -
+      - name: Upload validation artifacts
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Procglint-${{ env.VERSION }}-arm64
+          path: |
+            build/Procglint-${{ env.VERSION }}-arm64.zip
+            build/Procglint-${{ env.VERSION }}-arm64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          archive="build/Procglint-$VERSION-arm64.zip"
+          notes="$RUNNER_TEMP/procglint-release-notes.md"
+          warning='> [!WARNING]
+          > This build is ad-hoc signed and not notarized. Gatekeeper may block first launch. After verifying the download and trusting its source, use System Settings → Privacy & Security → Open Anyway.'
+          : > "$notes"
+          if [[ "$SIGNING" == adhoc ]]; then
+            printf '%s\n\n' "$warning" > "$notes"
+          fi
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$archive" "$archive.sha256" --clobber
+            if [[ "$SIGNING" == adhoc ]]; then
+              gh release view "$GITHUB_REF_NAME" --json body --jq .body > "$RUNNER_TEMP/procglint-existing-notes.md"
+              if ! grep -Fq 'This build is ad-hoc signed and not notarized.' "$RUNNER_TEMP/procglint-existing-notes.md"; then
+                cat "$RUNNER_TEMP/procglint-existing-notes.md" >> "$notes"
+                gh release edit "$GITHUB_REF_NAME" --notes-file "$notes"
+              fi
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" "$archive" "$archive.sha256" \
+              --verify-tag --title "Procglint $GITHUB_REF_NAME" --notes-file "$notes" --generate-notes
+          fi
+      - name: Cleanup signing assets
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/procglint-developer-id.p12" "$RUNNER_TEMP/procglint-notary-key.p8"
+          if [[ -f "$RUNNER_TEMP/procglint-signing.keychain-db" ]]; then
+            security delete-keychain "$RUNNER_TEMP/procglint-signing.keychain-db"
+          fi

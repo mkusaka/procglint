@@ -52,3 +52,54 @@ jobs:
       - name: Run tests
         run: scripts/test.sh
     timeout-minutes: 60
+  bundle:
+    name: App bundle and release packaging
+    runs-on: macos-26
+    permissions: {}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build release app (ad-hoc)
+        run: scripts/build-app.sh --configuration release
+      - name: Run bundle tests
+        # The bundle tests are free functions, not a suite named Bundle.
+        run: PROCGLINT_BUNDLE_TEST=1 scripts/test.sh --filter 'bundleBuild|builtAppHasExpectedLayoutMetadataAndSignatures'
+      - name: Check release arguments and archive
+        run: |
+          reject() {
+            if scripts/release.sh "$@" > /dev/null 2>&1; then
+              echo 'Expected invalid release arguments to fail.' >&2
+              exit 1
+            fi
+          }
+          reject
+          reject --version
+          reject --version 1.2.3 --sign
+          reject --version 1.2.3 --sign ''
+          reject --version 1.2.3 --sign - --unknown
+          for version in 1 1.2 v1.2.3 01.2.3 1.02.3 1.2.03 1.100.0 1.0.100 10000.0.0 '1.2.3;exit 0'; do
+            reject --version "$version" --sign -
+          done
+          reject --version 1.2.3 --sign 'Apple Development'
+          reject --version 1.2.3 --sign - --notarize
+          unset APP_STORE_CONNECT_KEY_PATH APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_ISSUER_ID
+          reject --version 1.2.3 --sign 'Developer ID Application' --notarize
+
+          scripts/release.sh --version 1.2.3 --sign -
+          (cd build && shasum -a 256 -c Procglint-1.2.3-arm64.zip.sha256)
+          extracted="$(mktemp -d "$RUNNER_TEMP/procglint-release-test.XXXXXX")"
+          trap 'rm -rf "$extracted"' EXIT
+          ditto -x -k build/Procglint-1.2.3-arm64.zip "$extracted"
+          app="$extracted/Procglint.app"
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" == 1.2.3 ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" == 10203 ]]
+          codesign --verify --deep --strict "$app"
+          for binary in MacOS/procglint-gui Helpers/procglint-agent Helpers/procglint-mcp Helpers/procglint; do
+            [[ "$(lipo -archs "$app/Contents/$binary")" == arm64 ]]
+            codesign --verify --strict "$app/Contents/$binary"
+          done
