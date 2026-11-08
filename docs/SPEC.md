@@ -182,7 +182,7 @@ Rejected targets (`TerminationRejection`): `not_own_process`, `protected_pid` (0
 
 `terminate_process(token)` re-validates identity immediately before `kill(2)` and returns `TerminationResult`: `outcome` (`signal_sent | rejected`), `rejection?`, `exited_confirmed` (bool, checked once ~500 ms later). Never escalates TERM → KILL. No process groups, negative pids, name matching, arbitrary signals, or shell execution.
 
-Audit log: JSON Lines at `~/Library/Application Support/Procglint/audit.jsonl`, one entry per prepare/terminate (`timestamp`, `client_kind`, `client_pid`, `process_key`, `pid`, `name`, `signal`, `outcome`, `rejection`). Capped at 1 MiB; rotates to `audit.1.jsonl` (one generation).
+Audit log: JSON Lines at `~/Library/Application Support/Procglint/audit.jsonl`, one entry per prepare/terminate (`timestamp`, `client_kind`, `client_pid`, `process_key`, `pid`, `name`, `signal`, `outcome`: `issued | signal_sent | rejected`, `rejection`). Capped at 1 MiB; rotates to `audit.1.jsonl` (one generation).
 
 ## Monitor status (self-diagnostics)
 
