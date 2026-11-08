@@ -40,17 +40,22 @@ public actor Sampler {
     public func sample() async throws -> Snapshot {
         let now = clock.now
         let sampledAt = Date()
-        let pids = try source.listPIDs()
+        let pids: [Int32]?
+        do {
+            pids = try source.listPIDs()
+        } catch ProcessSourceError.enumerationFailed {
+            pids = nil
+        }
         let ticks = try source.hostCPUTicks()
         let vm = try source.vmStatistics()
-        var coverage = Coverage(enumerated: pids.count)
+        var coverage = Coverage(enumerated: pids?.count ?? 0)
         var processes: [ProcessSample] = []
-        processes.reserveCapacity(pids.count)
+        processes.reserveCapacity(coverage.enumerated)
         var nextReadings: [ProcessIdentity: Reading] = [:]
         var nextMetadata: [ProcessIdentity: Metadata] = [:]
         var nextUsers: [UInt32: String] = [:]
 
-        for pid in pids {
+        for pid in pids ?? [] {
             do {
                 guard let bsd = try source.bsdInfo(pid: pid) else { throw ProcessSourceError.exited }
                 let identity = try ProcessIdentity(bootSessionID: bootSessionID, pid: pid, startTimeUS: bsd.startTimeUS)
@@ -109,16 +114,20 @@ public actor Sampler {
             wiredBytes: vm.wiredPages * page, compressedBytes: vm.compressorPages * page,
             activeBytes: vm.activePages * page, inactiveBytes: vm.inactivePages * page, freeBytes: vm.freePages * page
         )
-        // Failed sweeps must not erase baselines or prune live identities.
-        previous = nextReadings
-        metadata = nextMetadata
-        users = nextUsers
-        previousCPU = ticks
-        previousTime = now
+        // A failed census is not an empty successful sweep: keep baselines and live identities.
+        var status: SnapshotStatus = .unavailable
+        if pids != nil {
+            previous = nextReadings
+            metadata = nextMetadata
+            users = nextUsers
+            previousCPU = ticks
+            previousTime = now
+            status = interval == nil ? .warmingUp : .ok
+        }
         sequence += 1
         return Snapshot(agentInstanceID: agentInstanceID, snapshotID: "\(agentInstanceID.prefix(8))-\(sequence)",
                         sampledAt: sampledAt, intervalMS: interval.map { Int(clamping: $0 / 1_000_000) }, ageMS: 0,
-                        status: interval == nil ? .warmingUp : .ok, coverage: coverage, system: system, processes: processes)
+                        status: status, coverage: coverage, system: system, processes: processes)
     }
 
     /// The caller must enforce include_paths; paths never enter sweep snapshots.

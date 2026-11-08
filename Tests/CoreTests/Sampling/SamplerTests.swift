@@ -80,19 +80,75 @@ struct SamplerTests {
     @Test func enumerationFailurePreservesBaselinesAndCaches() async throws {
         let source = FakeProcessSource()
         source.addProcess(pid: 42, process: process())
+        source.update {
+            $0.cpuTicks = RawCPUTicks(user: 100, idle: 100)
+            $0.vm = RawVMStatistics(activePages: 10)
+        }
         let clock = FakeClock()
         let sampler = try Sampler(source: source, clock: clock)
-        _ = try await sampler.sample()
+        let first = try await sampler.sample()
+        let key = try #require(first.processes.first?.processKey)
+        #expect(try await sampler.path(for: key) == "/fake/worker")
         clock.advance(by: 1_000_000_000)
-        source.update { $0.enumerationError = .enumerationFailed }
-        await #expect(throws: ProcessSourceError.enumerationFailed) { try await sampler.sample() }
+        source.update {
+            $0.enumerationError = .enumerationFailed
+            $0.cpuTicks = RawCPUTicks(user: 150, idle: 150)
+        }
+        let failed = try await sampler.sample()
+        #expect(failed.status == .unavailable)
+        #expect(failed.snapshotID != first.snapshotID)
+        #expect(failed.intervalMS == 1000)
+        #expect(failed.coverage == Coverage())
+        #expect(failed.processes.isEmpty)
+        #expect(failed.system.memoryUsedBytes == 10 * source.pageSize)
         #expect(await sampler.cachedProcessCount == 1)
+        #expect(await sampler.cachedReadingCount == 1)
+        #expect(await sampler.cachedUserCount == 1)
+        #expect(try await sampler.path(for: key) == "/fake/worker")
+        clock.advance(by: 1_000_000_000)
+        source.update {
+            $0.enumerationError = nil
+            $0.cpuTicks = RawCPUTicks(user: 200, idle: 400)
+        }
+        source.setRusage(pid: 42, rusage: process(cpu: 5_000_000_000, read: 4100, written: 8200).rusage)
+        let recovered = try await sampler.sample()
+        #expect(recovered.status == .ok)
+        #expect(recovered.snapshotID != failed.snapshotID)
+        #expect(recovered.intervalMS == 2000)
+        #expect(recovered.processes.first?.processKey == key)
+        #expect(recovered.processes.first?.cpuPercent == .ok(200))
+        #expect(recovered.processes.first?.diskReadBps == .ok(2000))
+        #expect(recovered.processes.first?.diskWriteBps == .ok(4000))
+        #expect(recovered.system.cpuPercent == .ok(25))
+    }
+
+    @Test func enumerationFailureOnColdStartDoesNotCreateBaselines() async throws {
+        let source = FakeProcessSource()
+        source.addProcess(pid: 42, process: process())
+        source.update { $0.enumerationError = .enumerationFailed }
+        let clock = FakeClock()
+        let sampler = try Sampler(source: source, clock: clock)
+        let failed = try await sampler.sample()
+        #expect(failed.status == .unavailable)
+        #expect(failed.intervalMS == nil)
+        #expect(failed.coverage == Coverage())
+        #expect(failed.processes.isEmpty)
+        #expect(failed.system.cpuPercent == .warmingUp)
+        #expect(await sampler.cachedProcessCount == 0)
+        #expect(await sampler.cachedReadingCount == 0)
         clock.advance(by: 1_000_000_000)
         source.update { $0.enumerationError = nil }
-        source.setRusage(pid: 42, rusage: process(cpu: 5_000_000_000).rusage)
-        let recovered = try await sampler.sample()
-        #expect(recovered.intervalMS == 2000)
-        #expect(recovered.processes.first?.cpuPercent == .ok(200))
+        let first = try await sampler.sample()
+        #expect(first.status == .warmingUp)
+        #expect(first.intervalMS == nil)
+        #expect(first.processes.first?.cpuPercent == .warmingUp)
+        #expect(first.snapshotID != failed.snapshotID)
+        source.removeProcess(pid: 42)
+        clock.advance(by: 1_000_000_000)
+        let empty = try await sampler.sample()
+        #expect(empty.status == .ok)
+        #expect(empty.processes.isEmpty)
+        #expect(await sampler.cachedProcessCount == 0)
     }
 
     @Test func permissionDeniedWithBSDInfoStillListsProcess() async throws {

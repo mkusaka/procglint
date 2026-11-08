@@ -9,12 +9,13 @@ procglint: macOS (arm64, macOS 15+) process monitor. One per-user agent samples 
 
 - Test: `scripts/test.sh` (wraps `swift test`; adds the Swift Testing plugin path on Command Line Tools machines). Filter: `scripts/test.sh --filter CoreTests`.
 - Format + lint: `scripts/lint.sh` (check) / `scripts/lint.sh --fix` (apply SwiftFormat). Must be clean before you finish.
-- Build: `swift build`.
+- Build: `swift build` (package products); `scripts/build-app.sh` (complete ad-hoc Release app in `build/Procglint.app`).
+- UI: XcodeGen + XCUITest require full Xcode; see [README Testing](README.md#testing) for the command, opt-in bundle test (`PROCGLINT_BUNDLE_TEST=1`), and performance-test status (`PROCGLINT_PERF`).
 
 ## Rules
 
 - Swift 6 language mode, strict concurrency. No `@unchecked Sendable` / `nonisolated(unsafe)` unless the reason is in a one-line comment.
-- Tests use **Swift Testing** (`import Testing`, `@Test`, `#expect`). XCTest is not available on the dev machine.
+- Package unit/integration tests use **Swift Testing** (`import Testing`, `@Test`, `#expect`) and must work with Command Line Tools alone. `UITests/` uses XCTest/XCUITest through the generated Xcode project and requires full Xcode.
 - Tests must not depend on timing luck. Inject `MonotonicClock` / `ProcessSource` fakes; real-OS tests only assert invariants that always hold (e.g. own pid is listed).
 - Only edit files inside the directories your task owns. Do **not** edit `Package.swift`, `docs/SPEC.md`, CI, or other units' directories. If you need a change there, describe it in your final report.
 - Do not commit. Leave changes in the working tree; the reviewer commits.

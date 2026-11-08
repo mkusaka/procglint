@@ -127,10 +127,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         listContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 600).isActive = true
         let cpuSummary = verticalStack([NSTextField(labelWithString: "System CPU · 0–100%"), systemCPUChart], spacing: 2)
         let memorySummary = verticalStack([NSTextField(labelWithString: "Memory used / physical"), systemMemoryChart], spacing: 2)
-        for chart in [systemCPUChart, systemMemoryChart] {
-            chart.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        for group in [cpuSummary, memorySummary] {
+            group.widthAnchor.constraint(equalToConstant: 160).isActive = true
         }
+        for chart in [systemCPUChart, systemMemoryChart] {
+            chart.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        }
+        summary.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let summaryBar = NSStackView(views: [summary, cpuSummary, memorySummary])
+        summaryBar.distribution = .fill
+        summaryBar.alignment = .top
         summaryBar.spacing = 16
         let root = verticalStack([summaryBar, split])
         split.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true

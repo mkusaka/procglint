@@ -66,6 +66,12 @@ Set `RELEASE_SIGNING=adhoc`, then run the manual workflow or push a release tag 
 
 Ad-hoc builds are **not notarized**. Gatekeeper may block a downloaded app's first launch. Only after verifying the download and trusting its source, use System Settings → Privacy & Security → **Open Anyway**. Do not disable Gatekeeper globally. Manual ad-hoc artifacts and local builds have the same limitation.
 
+## Local app builds
+
+`scripts/build-app.sh [--configuration release|debug] [--sign <identity>|-]` builds the complete bundle at `build/Procglint.app`. Defaults are `release` and ad-hoc signing (`-`); it does not register the LaunchAgent, make a release ZIP or notarize. It replaces any existing app at that path. `MARKETING_VERSION` (default `1.0`) and `BUILD_VERSION` (default `1`) override the bundle versions; each must contain one to three numeric components. Builds use the separate `.build/app-bundle` scratch directory, so the opt-in bundle test can build while `swift test` holds the ordinary build directory lock.
+
+For validation commands, including XcodeGen/XCUITest and the opt-in `PROCGLINT_BUNDLE_TEST=1` bundle test, see [README Testing](../README.md#testing). The UI-test project embeds the MCP helper only; use `build-app.sh` for the complete agent/CLI distribution bundle.
+
 ## Local release builds
 
 Run on an Apple Silicon Mac with the Swift toolchain and Xcode command-line tools available. The script always builds the release configuration, replacing `build/Procglint.app` and that version's previous ZIP/checksum. It verifies bundle versions, every Mach-O's arm64-only architecture and signature, and (for Developer ID) hardened runtime before packaging. The ZIP has `Procglint.app` at its root (`ditto --keepParent`).

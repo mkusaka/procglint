@@ -11,6 +11,12 @@ final class ProcglintUITests: XCTestCase {
             XCTAssertTrue(window.waitForExistence(timeout: 10))
             expectValue(window.staticTexts["systemSummary"], contains: "CPU 25.0%")
             expectValue(window.staticTexts["systemSummary"], contains: "Memory 4.0 GiB/8.0 GiB")
+            for identifier in ["systemCPUChart", "systemMemoryChart"] {
+                let chart = window.images[identifier]
+                XCTAssertTrue(chart.waitForExistence(timeout: 5))
+                XCTAssertEqual(chart.frame.width, 160, accuracy: 1)
+                XCTAssertEqual(chart.frame.height, 36, accuracy: 1)
+            }
             expectValue(window.staticTexts["processCount"], equals: "20 of 20 processes")
             XCTAssertEqual(window.tables["processTable"].tableRows.count, 20)
         }

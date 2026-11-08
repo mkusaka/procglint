@@ -212,3 +212,35 @@ import Testing
     #expect(controller.ioChart.accessibilityLabel()?.contains("1.0 KiB/s, 512 B/s") == true)
     controller.window?.close()
 }
+
+@MainActor
+@Test func summaryChartsKeepTheirSizeAndLabelsAtDefaultAndMinimumWindowWidths() throws {
+    _ = NSApplication.shared
+    let prefs = preferences()
+    defer { prefs.defaults.removePersistentDomain(forName: prefs.store.suiteName ?? "") }
+    let model = try MonitorViewModel(service: FakeMonitorService(), preferences: prefs)
+    let controller = MainWindowController(model: model)
+    let window = try #require(controller.window)
+    defer { window.close() }
+    controller.render()
+    controller.summary.stringValue = "CPU 25.0% · Memory 4.0 GiB/8.0 GiB · wired 1.0 GiB · compressed 512 MiB · ok"
+    for width in [window.frame.width, window.minSize.width] {
+        window.setFrame(NSRect(x: 0, y: 0, width: width, height: window.frame.height), display: false)
+        let content = try #require(window.contentView)
+        content.layoutSubtreeIfNeeded()
+        let summaryContainer = try #require(controller.summary.superview)
+        let summaryRect = controller.summary.alignmentRect(forFrame: controller.summary.frame)
+        let summaryFrame = summaryContainer.convert(summaryRect, to: content)
+        var previousRight = summaryFrame.maxX
+        for chart in [controller.systemCPUChart, controller.systemMemoryChart] {
+            #expect(chart.bounds.size == NSSize(width: 160, height: 36))
+            let group = try #require(chart.superview as? NSStackView)
+            let label = try #require(group.arrangedSubviews.first as? NSTextField)
+            #expect(label.frame.width >= label.intrinsicContentSize.width)
+            let frame = group.convert(group.bounds, to: content)
+            #expect(frame.minX >= previousRight + 16)
+            #expect(frame.maxX <= content.bounds.maxX - 12)
+            previousRight = frame.maxX
+        }
+    }
+}

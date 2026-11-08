@@ -2,7 +2,7 @@
 
 `procglint-mcp` is a Model Context Protocol server over local stdio. The MCP host launches it as a child process; it relays requests over XPC to the shared per-user `procglint-agent`. It never samples the OS itself and opens no network listener. An idle MCP connection does not keep periodic sampling active.
 
-Install the complete `Procglint.app`, open it once, and register/approve its agent before connecting a host. The GUI need not stay open once the agent is registered. If the agent cannot be reached, requests report `agent_unavailable`; run `procglint doctor` for recovery instructions, rather than starting a separate sampler.
+Install the complete `Procglint.app`, open **Settings… → Register agent…**, and approve its agent in Login Items if requested before connecting a host. The GUI need not stay open once the agent is registered. If the agent cannot be reached, requests report `agent_unavailable`; run `procglint doctor` for recovery instructions, rather than starting a separate sampler.
 
 ## Connect a client
 
@@ -65,7 +65,7 @@ Inputs below are tool `arguments`, not JSON-RPC envelopes. Unknown properties, w
 | `get_snapshot` | Optional `top` (default 50, 1–200), `sort` (default `cpu`) | Snapshot header, `system`, and top `processes` within the caller's scope |
 | `list_processes` | Optional `search`, `filter`, `sort`, `order`, `limit`, `cursor`, `fields`; see below | `snapshot` header, `items`, optional `next_cursor`, `total_matched` |
 | `get_process` | Required `process_key` | One process sample; path only with effective `include_paths` permission |
-| `get_history` | Required nonempty `series` array: `"system"`, process keys, or this client's observation IDs; optional nullable `since` | `{ "series": [HistorySeries, ...] }`; retained data only |
+| `get_history` | Required `series` array (1–17 selectors, enforced by the agent): `"system"`, process keys, or this client's observation IDs; optional nullable `since` | `{ "series": [HistorySeries, ...] }`; retained data only |
 | `get_monitor_status` | None (`{}`) | Agent/client CPU and footprint, sampling state, interval, collection counts/times, coverage, failures, leases, estimated history bytes, current `policy` |
 | `start_observation` | Required `interval_ms` (1000/2000/5000/10000), `duration_ms` (1000–60000); optional `process_keys` (default empty, at most 16) | `observation_id`, `interval_ms`, `started_at`, `expires_at`, `process_keys`, `state` (`active`, `expired`, `stopped`); returns immediately, no auto-renewal |
 | `stop_observation` | Required `observation_id` belonging to this client | `{ "observation_id": "…", "stopped": true }` |
@@ -90,7 +90,7 @@ Snapshot headers contain `agent_instance_id`, `snapshot_id`, `sampled_at`, `inte
 3. Let samples accumulate, then call `get_history` with `{ "series": ["<returned observation_id>"] }`. A system-only observation returns system history; one with process keys returns those process series. Add `"system"` as another selector when both are needed. Use `since` to reduce output.
 4. Stop early with `stop_observation` when finished. Expiry or client disconnect releases the observation; there is no automatic renewal.
 
-History is shared, in memory, and bounded: by default 10 minutes, 600 points per series and 16 retained process series per agent (including pins and other clients' observations). System history is retained while sampling. Process history begins only when pinned or observed; there is no backfill. A series has `series`, `points` and `gaps: [{ "from": ..., "to": ... }]`. Process points carry CPU, footprint and disk rates; system points carry CPU and `memory_used_bytes`. Never interpolate across a gap as though sampling continued.
+History is shared, in memory, and bounded: by default 10 minutes, 600 points per series and 16 retained process series per agent (including pins and other clients' observations). System history is retained while sampling. Process history begins only when pinned, observed, or selected in a visible GUI window; there is no backfill. A series has `series`, `points` and `gaps: [{ "from": ..., "to": ... }]`. Process points carry CPU, footprint and disk rates; system points carry CPU and `memory_used_bytes`. Never interpolate across a gap as though sampling continued.
 
 ### Termination requires two calls and human approval
 
@@ -130,9 +130,11 @@ Wire keys are `snake_case`; dates are fractional ISO 8601 UTC, such as `2026-11-
 | Concurrent requests | 4 per bridge connection |
 | Read tools (first five above) | Token bucket: capacity/burst 20, refill 10 tokens/second |
 | Mutating tools (last five above) | Separate token bucket: capacity/burst 5, refill 1 token/second |
+| Agent aggregate reads | Separate token bucket shared across all GUI/MCP/CLI clients: capacity/burst 120, refill 60 tokens/second |
+| Agent aggregate mutations | Separate token bucket shared across all clients: capacity/burst 20, refill 5 tokens/second |
 | Shared collection starts | At most once per 1000 ms; concurrent requests join one collection |
 
-Tool buckets are per bridge connection, use monotonic time and start full. Excess calls return `rate_limited`, not queued retries. The agent contract also requires aggregate admission control across clients; the rates above are the bridge's constants, not a promise of additional agent capacity. Page lists, select fields or use `since` for history to stay below output limits. Slow stdout applies bridge backpressure without holding agent state.
+Bridge tool buckets are per connection; agent buckets are shared across connections, including GUI and CLI requests. Both use monotonic time and start full. Excess calls return `rate_limited`, not queued retries. Agent reads are snapshot, list, process, history, status and policy requests; mutations include leases, pins, observations, policy changes and termination. The initial XPC `hello` is not charged. Bridge and agent admission checks both apply; creating more bridges does not bypass aggregate limits. Page lists, select fields or use `since` for history to stay below output limits. Slow stdout applies bridge backpressure without holding agent state.
 
 ### Errors
 

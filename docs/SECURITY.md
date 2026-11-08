@@ -13,7 +13,7 @@ Default MCP access is read-only, own processes, without executable paths. Enable
 | Prompt injection in process metadata | Names, user strings and paths are data, never instructions. Tool descriptions and the bundled skill say not to follow them. |
 | PID reuse, process exit or executable replacement | Opaque identity includes boot session, PID and start time; termination additionally revalidates owner and executable metadata |
 | Accidental/destructive termination | Own-process restriction, protected PIDs, two-step short-lived ticket, confirmation, audit log, no automatic escalation |
-| Excessive monitoring or output | Shared single-flight sampler, bounded observations/history, request/response/concurrency limits and bridge rate limits |
+| Excessive monitoring or output | Shared single-flight sampler, bounded observations/history, request/response/concurrency limits, per-bridge and aggregate agent rate limits ([constants](MCP.md#protocol-and-limits)) |
 
 This is not a sandbox against malware already running as you, a compromised MCP host, or a compromised signing identity. A same-user attacker may modify user-writable settings or replace binaries in a development installation. Teamless path checks are a development/ad-hoc trust boundary, not equivalent to Developer ID distribution. Read access can reveal sensitive application names; executable paths may include account or project names.
 
@@ -40,13 +40,24 @@ Keep all ad-hoc helpers inside the same complete app bundle (or the same build o
 
 ## Permissions and data exposure
 
-**Effective MCP permissions = OS-allowed ∩ app settings ∩ launch flags.** App settings use the defaults suite `io.github.mkusaka.procglint`. Flags request `observe`, `configure`, `terminate`, `force_kill`, `include_system`, `include_paths`; none overrides the other layers. GUI access is capped by app settings too, with its own termination confirmation dialog.
+**Effective MCP permissions = OS-allowed ∩ app settings ∩ launch flags.** App settings use the defaults suite `io.github.mkusaka.procglint`. Flags request `observe`, `configure`, `terminate`, `force_kill`, `include_system`, `include_paths`; none overrides the other layers. Stored permissions default to empty (read-only, own processes, no paths). GUI access is capped by app settings too, with its own termination confirmation dialog; CLI process/path scope also follows those settings.
+
+The shared defaults keys are:
+
+| Key | Stored value |
+| --- | --- |
+| `procglint.sampling_policy` | JSON Data: policy revision, intervals and history limits |
+| `procglint.allowed_permissions` | JSON Data: allowed permission set |
+| `procglint.menu_bar` | Boolean; absent means disabled |
+| `procglint.optional_columns` | Array of enabled optional GUI column names; absent means none |
+
+Use Settings to change permissions and policy rather than writing malformed serialized values. Removing this defaults suite deletes all four settings.
 
 The bridge's tool list reflects launch flags only; the agent is the final authority on reads and mutations. `--include-system` allows reading other users' processes only where the OS permits it, never terminating them. `--include-paths` allows lazy executable-path retrieval, not arbitrary file reads. Filtered response caches are keyed by `(snapshot_id, scope)` so different process/path scopes do not share filtered results.
 
 Never exposed through procglint: **command-line arguments, environment variables or process memory contents**. There is no shell execution, arbitrary signal API, process-group operation, negative-PID signaling or name-based termination. It does not collect GPU, temperature, power, per-process network traffic or a replacement for Apple's Energy Impact.
 
-History is in memory and bounded (default 10 minutes, 600 points per series, 16 process series). Only pinned/observed processes get process history. A disconnected client loses its leases and observations; retained history can remain until its retention window expires or the agent exits. Settings and the bounded termination audit log are persistent. CLI exports or data copied to an MCP host are outside that in-memory retention policy.
+History is in memory and bounded (default 10 minutes, 600 points per series, 16 process series). Only pinned, observed, or GUI-selected processes get process history; selection owns tracking while the GUI window lease is active. A disconnected client loses its leases and observations; retained history can remain until its retention window expires or the agent exits. Settings and the bounded termination audit log are persistent. CLI exports or data copied to an MCP host are outside that in-memory retention policy.
 
 ## Termination safeguards
 
@@ -63,7 +74,7 @@ Rejections: `not_own_process`, `protected_pid`, `self`, `process_changed`, `exit
 
 ## Audit log
 
-The contracted agent log location is:
+The agent writes its log at:
 
 ```text
 ~/Library/Application Support/Procglint/audit.jsonl

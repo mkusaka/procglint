@@ -30,7 +30,7 @@ opening another MCP connection does not create another sampler.
 4. Read results with `get_history`, selecting the returned `observation_id`,
    process keys or `"system"`; use `since` to bound output. Stop early with
    `stop_observation` if finished. History has no backfill: process data exists
-   only for pinned/observed targets, and gaps mean unobserved time.
+   only for pinned, observed or GUI-selected targets, and gaps mean unobserved time.
 5. Use `get_monitor_status` for agent overhead, collection failures, leases,
    shared history limits and policy. It is not a reason to change policy
    without the user's request. Policy changes require all fields and the
@@ -79,8 +79,8 @@ shell commands as a workaround.
 ## Setup and trust
 
 If the tools are unavailable, install the complete `Procglint.app` in
-`/Applications`, open it and register/approve its agent. Register the helper
-read-only first, for example:
+`/Applications`, open Settings → Register agent… and approve it in Login Items
+if requested. Register the helper read-only first, for example:
 
 ```sh
 claude mcp add procglint -- /Applications/Procglint.app/Contents/Helpers/procglint-mcp
