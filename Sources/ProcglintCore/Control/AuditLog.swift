@@ -17,7 +17,7 @@ public final class AuditLog: Sendable {
 
     /// An unrecognized token has no target; do not invent a process identity for the audit.
     func appendUnresolvedTermination(timestamp: Date, clientKind: ClientKind, clientPID: Int32,
-                                     rejection: TerminationRejection) throws
+                                     rejection: TerminationRejection?) throws
     {
         try appendLine(ProcglintJSON.encoder().encode(UnresolvedTermination(
             timestamp: timestamp, clientKind: clientKind, clientPID: clientPID, rejection: rejection
@@ -75,7 +75,7 @@ public final class AuditLog: Sendable {
         let timestamp: Date
         let clientKind: ClientKind
         let clientPID: Int32
-        let rejection: TerminationRejection
+        let rejection: TerminationRejection?
 
         func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: AuditEntry.CodingKeys.self)
