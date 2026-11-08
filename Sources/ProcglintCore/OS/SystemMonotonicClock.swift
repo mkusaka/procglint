@@ -12,7 +12,8 @@ public struct SystemMonotonicClock: MonotonicClock {
         try Task.checkCancellation()
         while now < deadline {
             let remaining = deadline - min(now, deadline)
-            try await Task.sleep(for: .nanoseconds(Int64(clamping: remaining)), clock: .continuous)
+            try await Task.sleep(for: .nanoseconds(Int64(clamping: remaining)),
+                                 tolerance: .nanoseconds(Int64(clamping: remaining / 10)), clock: .continuous)
         }
     }
 }
