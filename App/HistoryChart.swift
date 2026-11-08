@@ -61,7 +61,7 @@ final class HistoryChartView: NSView {
         setAccessibilityElement(true)
         setAccessibilityLabel(label + ": No history")
         setAccessibilityRole(.image)
-        heightAnchor.constraint(equalToConstant: compact ? 32 : 80).isActive = true
+        heightAnchor.constraint(equalToConstant: compact ? 36 : 80).isActive = true
     }
 
     @available(*, unavailable)

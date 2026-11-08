@@ -112,6 +112,46 @@ struct AgentServiceTests {
         await fixture.close()
     }
 
+    @Test func enumerationFailureReturnsUnavailableAndRecoversWithoutLosingBaselines() async throws {
+        let fixture = try ServiceFixture()
+        let client = fixture.client()
+        let first = try await client.snapshot(top: 200, sort: .pid)
+        #expect(first.status == .warmingUp)
+        #expect(!first.processes.isEmpty)
+        fixture.source.update { $0.enumerationError = .enumerationFailed }
+        fixture.clock.advance(by: 6_000_000_000)
+        let failed = try await client.snapshot(top: 200, sort: .pid)
+        #expect(failed.status == .unavailable)
+        #expect(failed.snapshotID != first.snapshotID)
+        #expect(failed.processes.isEmpty)
+        #expect(failed.coverage == Coverage())
+        let page = try await client.listProcesses(ProcessQuery(filter: .all))
+        #expect(page.snapshot.status == .unavailable)
+        #expect(page.snapshot.snapshotID == failed.snapshotID)
+        #expect(page.items.isEmpty)
+        let status = try await client.status()
+        #expect(status.failures == ["unavailable": 1])
+        #expect(status.collectionsTotal == 2)
+        let failedHistory = try await client.history(HistoryRequest(series: ["system"]))
+        #expect(failedHistory.first?.points.count == 1)
+        #expect(failedHistory.first?.gaps.count == 1)
+        fixture.source.update {
+            $0.enumerationError = nil
+            $0.processes[42]?.rusage.cpuTimeNS += 2_400_000_000
+        }
+        fixture.clock.advance(by: 6_000_000_000)
+        let recovered = try await client.snapshot(top: 200, sort: .pid)
+        #expect(recovered.status == .ok)
+        #expect(recovered.intervalMS == 12000)
+        #expect(recovered.processes.first { $0.pid == 42 }?.cpuPercent == .ok(20))
+        let recoveredHistory = try await client.history(HistoryRequest(series: ["system"]))
+        #expect(recoveredHistory.first?.points.count == 2)
+        #expect(recoveredHistory.first?.gaps.count == 1)
+        #expect(try await client.status().failures == ["unavailable": 1])
+        await client.invalidate()
+        await fixture.close()
+    }
+
     @Test func statusFallsBackToDirectFootprintWithoutInventingMeasurements() async throws {
         let fixture = try ServiceFixture(omitAgentRow: true)
         let client = fixture.client()

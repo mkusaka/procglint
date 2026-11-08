@@ -73,6 +73,37 @@ func preferences() -> AppPreferences {
 }
 
 @MainActor
+@Test func unavailableSnapshotKeepsRowsAndSelectionUntilRecovery() async throws {
+    let prefs = preferences()
+    defer { prefs.defaults.removePersistentDomain(forName: prefs.store.suiteName ?? "") }
+    let process = try sample()
+    let service = try FakeMonitorService(rows: [process])
+    let model = try MonitorViewModel(service: service, preferences: prefs)
+    await model.setVisibility(window: true, menuBar: false)
+    model.select(process.processKey)
+    await model.selectionUpdate?.value
+    let queries = service.queries.count
+    service.current = snapshot(id: "failed", status: .unavailable)
+    await model.tick()
+    #expect(model.header?.status == .unavailable)
+    #expect(model.summary.contains("unavailable"))
+    #expect(model.message.contains("could not enumerate processes"))
+    #expect(model.rows == [process])
+    #expect(model.totalMatched == 1)
+    #expect(model.selectedKey == process.processKey)
+    #expect(model.detail?.processKey == process.processKey)
+    #expect(service.queries.count == queries)
+    service.current = snapshot(id: "recovered")
+    await model.tick()
+    await model.selectionUpdate?.value
+    #expect(model.header?.status == .ok)
+    #expect(model.message.isEmpty)
+    #expect(model.rows.isEmpty)
+    #expect(model.totalMatched == 0)
+    #expect(model.selectedKey == nil)
+}
+
+@MainActor
 @Test func queryMappingKeepsGUIFilterAndDoesNotFetchAllProcesses() async throws {
     let prefs = preferences()
     defer { prefs.defaults.removePersistentDomain(forName: prefs.store.suiteName ?? "") }

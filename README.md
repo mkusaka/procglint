@@ -25,12 +25,12 @@ Apple Silicon (arm64), macOS 15 or later, and a GUI login session for the per-us
 The packaged 1.0 interface is a complete app with bundled agent, MCP bridge and CLI:
 
 1. Download the app ZIP from [GitHub Releases](https://github.com/mkusaka/procglint/releases), unzip it and move **Procglint.app** to `/Applications` before registering the agent.
-2. Open the app. In first-run setup / Settings, explicitly register its per-user agent (`io.github.mkusaka.procglint.agent`).
+2. Open the app, then **Settings…** (⌘,) → **Register agent…** to explicitly register its per-user agent (`io.github.mkusaka.procglint.agent`).
 3. If registration requires approval, allow Procglint in **System Settings → General → Login Items & Extensions**, then check registration again. Use `procglint doctor` for registration state and recovery instructions.
 
 The registered agent starts on demand; the GUI need not remain open for MCP use. With no clients it exits after a 60-second grace period. If unavailable, clients report an error instead of starting another sampler.
 
-For a source-built app, the 1.0 bundle-build entry point is `scripts/build-app.sh`. `swift build` alone does not install/register an app or copy helpers into `/Applications`.
+For a source-built app, run `scripts/build-app.sh` (Release, ad-hoc signed by default; `--configuration debug` selects Debug, `--sign '<identity>'` selects a signing identity). It writes `build/Procglint.app`; move that complete app to `/Applications` before registration. `swift build` alone does not install/register an app or copy helpers into `/Applications`. See [Releasing](docs/RELEASING.md) for version overrides and release packaging.
 
 ## Connect an MCP client
 
@@ -50,17 +50,20 @@ The packaged CLI is `/Applications/Procglint.app/Contents/Helpers/procglint`. Us
 
 | Command | Purpose |
 | --- | --- |
-| `procglint status` | Inspect the shared agent's sampling state, overhead and diagnostics. |
+| `procglint status [--json]` | Inspect the shared agent's sampling state, overhead and diagnostics; human-readable by default. |
 | `procglint doctor` | Report agent registration/reachability and recovery steps, including Login Items approval. |
-| `procglint export` | Export current values / retained history through the agent. |
+| `procglint export snapshot [--json\|--csv] [--all]` | Export the top 50 own processes by CPU; `--all` pages through every permitted process in one snapshot. |
+| `procglint export history [--series system\|<process_key> ...] [--json\|--csv]` | Export retained history; defaults to `system`. |
+| `procglint --help` | Show usage; command/subcommand `--help` is also supported. |
 
 ```sh
 /Applications/Procglint.app/Contents/Helpers/procglint status
 /Applications/Procglint.app/Contents/Helpers/procglint doctor
-/Applications/Procglint.app/Contents/Helpers/procglint export
+/Applications/Procglint.app/Contents/Helpers/procglint export snapshot --csv
+/Applications/Procglint.app/Contents/Helpers/procglint export history --series system --json
 ```
 
-These are the 1.0 CLI commands from the [contract](docs/SPEC.md); the CLI shares the agent and does not run its own periodic sampler. History cannot recover time when a process was not tracked.
+Exports default to JSON. Missing CSV metrics are empty, with separate status columns, never zero. `--all` does not bypass app permissions: CLI process/path scope is capped by the `include_system` / `include_paths` settings. The CLI shares the agent and does not run its own periodic sampler. History cannot recover time when a process was not tracked.
 
 ## Architecture
 
@@ -77,7 +80,7 @@ launchd starts the agent through `io.github.mkusaka.procglint.agent`. Clients sh
 
 ## Uninstall
 
-1. While the app is still installed, run `procglint doctor` and follow its agent-unregistration instructions. Merely denying Login Items approval is not the same as unregistering the service. For a development registration, use `scripts/dev-agent.sh stop`.
+1. While the app is still installed, open **Settings… → Unregister agent**. `procglint doctor` diagnoses registration/reachability; it does not unregister the agent or print uninstall instructions. Merely denying Login Items approval is not the same as unregistering the service. For a development registration, use `scripts/dev-agent.sh stop`.
 2. Remove procglint from your MCP host configuration, close its bridge connections and quit the app.
 3. Remove the app, its application-support directory (including audit logs), and its actual defaults suite. This permanently deletes settings and audit history; keep any records you need first:
 
@@ -91,8 +94,25 @@ launchd starts the agent through `io.github.mkusaka.procglint.agent`. Clients sh
 ## Development
 
 ```sh
-mise install          # swiftformat, swiftlint, lefthook
+mise install          # swiftformat, swiftlint, lefthook, XcodeGen
 lefthook install
-scripts/test.sh       # swift test
-scripts/lint.sh       # format check + lint
+swift build           # package products, not an installed app
 ```
+
+For a development LaunchAgent, unregister any bundled agent first, then run `scripts/dev-agent.sh start`; `status` inspects it and `stop` removes it. Its label/plist is `io.github.mkusaka.procglint.agent.dev` / `~/Library/LaunchAgents/io.github.mkusaka.procglint.agent.dev.plist`, but it serves the same Mach service as the bundled agent. Never run both registrations together.
+
+## Testing
+
+- **Unit/integration:** `scripts/test.sh` (wraps `swift test`; filter with `--filter CoreTests`). Uses Swift Testing and deterministic fakes; the real bundle build is opt-in.
+- **UI:** requires full Xcode, XcodeGen (`mise install`), an unlocked GUI login session, and macOS developer-tools/UI automation approval. Uses XCUITest with an isolated fixture; no LaunchAgent registration or real process termination:
+
+  ```sh
+  mise exec -- xcodegen generate
+  DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
+    -project Procglint.xcodeproj -scheme Procglint -destination 'platform=macOS' \
+    -derivedDataPath build/DD CODE_SIGN_IDENTITY=- test
+  ```
+
+- **Bundle:** `PROCGLINT_BUNDLE_TEST=1 scripts/test.sh --filter 'bundleBuild|builtAppHasExpectedLayoutMetadataAndSignatures'` builds an ad-hoc Debug app and checks layout, metadata, arm64 binaries and signatures. Replaces `build/Procglint.app`; it does not register the agent or verify notarization.
+- **Performance:** `PROCGLINT_PERF=1 scripts/test.sh --filter PerformanceTests` (Release recommended: add `-c release`). Run `scripts/benchmark.sh` for benchmarks; see [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for details.
+- **Lint:** `scripts/lint.sh --fix` applies SwiftFormat and runs SwiftLint; `scripts/lint.sh` checks formatting and lint without rewriting files.
