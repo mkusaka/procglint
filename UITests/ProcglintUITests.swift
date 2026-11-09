@@ -134,11 +134,46 @@ final class ProcglintUITests: XCTestCase {
         }
     }
 
-    private func withApp(_ body: (XCUIApplication, URL) throws -> Void) throws {
+    func testUnregisteredBannerAndExplicitRegistration() throws {
+        try withApp(arguments: ["--ui-testing-unregistered"]) { app, _ in
+            let window = app.windows["mainWindow"]
+            XCTAssertTrue(window.waitForExistence(timeout: 10))
+            expectValue(window.staticTexts["agentOnboardingMessage"], contains: "needs its background agent")
+            XCTAssertEqual(window.tables["processTable"].tableRows.count, 0)
+            let register = window.buttons["registerAgent"]
+            XCTAssertTrue(register.exists)
+            XCTAssertFalse(window.buttons["agentLoginItems"].exists)
+            register.click()
+            expectValue(window.staticTexts["processCount"], equals: "20 of 20 processes")
+            XCTAssertFalse(window.staticTexts["agentOnboardingMessage"].exists)
+        }
+    }
+
+    func testAboutMenuAndLaunchAtLoginFixture() throws {
+        try withApp { app, _ in
+            XCTAssertTrue(app.windows["mainWindow"].waitForExistence(timeout: 10))
+            // The application menu title is the process name, which differs between Xcode and release builds.
+            app.menuBars.menuBarItems.element(boundBy: 1).click()
+            let about = app.menuItems["About procglint"]
+            XCTAssertTrue(about.waitForExistence(timeout: 5))
+            app.typeKey(.escape, modifierFlags: [])
+            app.typeKey(",", modifierFlags: .command)
+            let settings = app.windows["settingsWindow"]
+            XCTAssertTrue(settings.waitForExistence(timeout: 5))
+            let toggle = settings.checkBoxes["launchAtLoginToggle"]
+            XCTAssertEqual(toggle.value as? Int, 0)
+            toggle.click()
+            wait(for: NSPredicate(format: "value == 1"), on: toggle)
+            toggle.click()
+            wait(for: NSPredicate(format: "value == 0"), on: toggle)
+        }
+    }
+
+    private func withApp(arguments: [String] = [], _ body: (XCUIApplication, URL) throws -> Void) throws {
         continueAfterFailure = false
         let app = XCUIApplication()
         let audit = FileManager.default.temporaryDirectory.appendingPathComponent("procglint-ui-\(UUID().uuidString).log")
-        app.launchArguments = ["--ui-testing"]
+        app.launchArguments = ["--ui-testing"] + arguments
         app.launchEnvironment["PROCGLINT_UI_TEST_AUDIT_PATH"] = audit.path
         addTeardownBlock { @MainActor () async throws in
             app.terminate()

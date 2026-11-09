@@ -64,6 +64,9 @@ plist="$app/Contents/Info.plist"
   fail "Bundle marketing version does not match the requested version."
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")" == "$build_version" ]] ||
   fail "Bundle build version does not match the computed build number."
+commit="$(/usr/libexec/PlistBuddy -c 'Print :ProcglintGitCommit' "$plist")" ||
+  fail "Bundle git commit key is missing."
+[[ -n "$commit" ]] || fail "Bundle git commit is empty."
 
 mach_o_count=0
 while IFS= read -r -d '' binary; do

@@ -83,6 +83,13 @@ func builtAppHasExpectedLayoutMetadataAndSignatures() throws {
         #expect(info[key] as? String == value)
     }
     #expect(info["NSHighResolutionCapable"] as? Bool == true)
+    let revision = try run("/usr/bin/git", ["rev-parse", "--short", "HEAD"])
+    let dirty = try run("/usr/bin/git", ["status", "--porcelain"])
+    let expectedCommit = revision.output.trimmingCharacters(in: .whitespacesAndNewlines) + (dirty.output.isEmpty ? "" : "-dirty")
+    #expect(info["ProcglintGitCommit"] as? String == expectedCommit)
+    let version = try run(contents.appendingPathComponent("Helpers/procglint").path, ["--version"])
+    #expect(version.status == 0)
+    #expect(version.output == "procglint 2.3.4 (\(expectedCommit))\n")
 
     let plistName = "io.github.mkusaka.procglint.agent.plist"
     let agent = try plist(at: contents.appendingPathComponent("Library/LaunchAgents/" + plistName))

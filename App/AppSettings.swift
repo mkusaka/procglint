@@ -92,15 +92,32 @@ final class SettingsViewModel {
     var onChange: (@MainActor () -> Void)?
     var onPolicyChanged: (@MainActor (SamplingPolicy) -> Void)?
     var onPermissionsChanged: (@MainActor () -> Void)?
+    var onRegistrationChanged: (@MainActor () async -> Void)?
+    let loginItem: LoginItemService
+    private(set) var changingLoginItem = false
+
+    var opensAtLogin: Bool {
+        loginItem.status() == .enabled || loginItem.status() == .requiresApproval
+    }
+
+    var loginItemHint: String {
+        switch loginItem.status() {
+        case .requiresApproval: "Approve procglint in System Settings → General → Login Items."
+        case .notFound: "Login item not found — reinstall the complete Procglint.app."
+        case .enabled, .notRegistered: ""
+        }
+    }
 
     init(service: any MonitorService, preferences: AppPreferences, helperURL: URL?,
-         registrationStatus: @escaping @MainActor () -> String, registerAgent: @escaping @MainActor () throws -> Void) throws
+         registrationStatus: @escaping @MainActor () -> String, registerAgent: @escaping @MainActor () throws -> Void,
+         loginItem: LoginItemService = .mainApp) throws
     {
         self.service = service
         self.preferences = preferences
         self.helperURL = helperURL
         self.registrationStatus = registrationStatus
         self.registerAgent = registerAgent
+        self.loginItem = loginItem
         policy = try preferences.store.samplingPolicy()
         permissions = try preferences.store.allowedPermissions()
     }
@@ -147,9 +164,29 @@ final class SettingsViewModel {
         onChange?()
     }
 
-    func register() {
+    func register() async {
         do { try registerAgent(); message = registrationStatus() } catch { message = Display.error(error) }
+        await registrationChanged()
+    }
+
+    func registrationChanged() async {
         onChange?()
+        await onRegistrationChanged?()
+    }
+
+    func setOpensAtLogin(_ enabled: Bool) async {
+        guard !changingLoginItem else { return }
+        changingLoginItem = true
+        onChange?()
+        defer { changingLoginItem = false; onChange?() }
+        do {
+            if enabled {
+                try loginItem.register()
+            } else {
+                try await loginItem.unregister()
+            }
+            message = loginItemHint
+        } catch { message = Display.error(error) }
     }
 
     func configuration() throws -> String {

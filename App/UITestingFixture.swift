@@ -1,5 +1,6 @@
 import Foundation
 import ProcglintCore
+import ProcglintIPC
 
 /// Only selected by --ui-testing; no OS sampling, XPC, registration, or real signals.
 @MainActor
@@ -13,7 +14,17 @@ final class UITestingFixture: MonitorService {
     private let auditURL: URL?
     let suiteName = "io.github.mkusaka.procglint.ui-testing.\(UUID().uuidString)"
 
-    init() throws {
+    var agentRegistered: Bool
+    private var loginItemStatus = AgentRegistration.Status.notRegistered
+
+    var loginItem: LoginItemService {
+        LoginItemService(status: { self.loginItemStatus },
+                         register: { self.loginItemStatus = .enabled },
+                         unregister: { self.loginItemStatus = .notRegistered })
+    }
+
+    init(unregistered: Bool = false) throws {
+        agentRegistered = !unregistered
         currentPolicy = try SamplingPolicy()
         let date = Date(timeIntervalSince1970: 1_800_000_000)
         let rows = try (0 ..< 20).map { index in
@@ -68,7 +79,8 @@ final class UITestingFixture: MonitorService {
     }
 
     func listProcesses(_ query: ProcessQuery) async throws -> ProcessPage {
-        try store.listProcesses(query, scope: AccessScope(includeSystem: true, includePaths: true), pinned: pins)
+        try requireAgent()
+        return try store.listProcesses(query, scope: AccessScope(includeSystem: true, includePaths: true), pinned: pins)
     }
 
     func process(key: ProcessKey) async throws -> ProcessSample {
@@ -91,13 +103,15 @@ final class UITestingFixture: MonitorService {
     }
 
     func status() async throws -> MonitorStatus {
-        MonitorStatus(agentInstanceID: current.agentInstanceID, agentPID: 4000, agentCPUPercent: .ok(0.1),
-                      agentFootprintBytes: 1_048_576, samplingActive: true, effectiveIntervalMS: .fiveSeconds,
-                      collectionsTotal: 2, lastCollectionMS: 1, collectionP95MS: 1, lastCoverage: current.coverage,
-                      failures: [:], leases: [], clients: [], historyBytes: 4096, policy: currentPolicy)
+        try requireAgent()
+        return MonitorStatus(agentInstanceID: current.agentInstanceID, agentPID: 4000, agentCPUPercent: .ok(0.1),
+                             agentFootprintBytes: 1_048_576, samplingActive: true, effectiveIntervalMS: .fiveSeconds,
+                             collectionsTotal: 2, lastCollectionMS: 1, collectionP95MS: 1, lastCoverage: current.coverage,
+                             failures: [:], leases: [], clients: [], historyBytes: 4096, policy: currentPolicy)
     }
 
     func setLease(_ request: LeaseRequest) async throws -> SamplingLease {
+        try requireAgent()
         try request.validate()
         return SamplingLease(leaseID: request.kind.rawValue, clientID: "gui-ui", kind: request.kind,
                              intervalMS: request.intervalMS, expiresAt: 30_000_000_000)
@@ -151,6 +165,10 @@ final class UITestingFixture: MonitorService {
         audit.append("signal \(ticket.pid) \(ticket.signal.rawValue)")
         try writeAudit()
         return try TerminationResult(outcome: .signalSent, exitedConfirmed: false)
+    }
+
+    private func requireAgent() throws {
+        guard agentRegistered else { throw AgentError.agentUnavailable("UI fixture agent is not registered") }
     }
 
     private func writeAudit() throws {

@@ -1,11 +1,13 @@
 import AppKit
 import ProcglintCore
+import ProcglintIPC
 
 @MainActor
 public final class ProcglintApplication: NSObject, NSApplicationDelegate {
     private let model: MonitorViewModel
     private let uiTestingFixture: UITestingFixture?
     private let settingsModel: SettingsViewModel
+    private let bundle: Bundle
     private let unregisterAgent: @MainActor () async throws -> Void
     private let openLoginItems: @MainActor () -> Void
     private var mainWindow: MainWindowController?
@@ -19,30 +21,38 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
                 registrationStatus: @escaping @MainActor () -> String,
                 registerAgent: @escaping @MainActor () throws -> Void,
                 unregisterAgent: @escaping @MainActor () async throws -> Void,
-                openLoginItems: @escaping @MainActor () -> Void) throws
+                openLoginItems: @escaping @MainActor () -> Void,
+                agentStatus: @escaping @MainActor () -> AgentRegistration.Status = { AgentRegistration().status }) throws
     {
-        let fixture = try ProcessInfo.processInfo.arguments.contains("--ui-testing") ? UITestingFixture() : nil
+        self.bundle = bundle
+        let arguments = ProcessInfo.processInfo.arguments
+        let fixture = try arguments.contains("--ui-testing") ? UITestingFixture(unregistered: arguments.contains("--ui-testing-unregistered")) : nil
         uiTestingFixture = fixture
         let status: @MainActor () -> String
         let register: @MainActor () throws -> Void
+        let registration: @MainActor () -> AgentRegistration.Status
         if fixture == nil {
             self.unregisterAgent = unregisterAgent
             self.openLoginItems = openLoginItems
             status = registrationStatus
             register = registerAgent
+            registration = agentStatus
         } else {
-            self.unregisterAgent = {}
+            self.unregisterAgent = { fixture?.agentRegistered = false }
             self.openLoginItems = {}
-            status = { "UI test fixture (no agent)" }
-            register = {}
+            status = { fixture?.agentRegistered == true ? "Enabled (UI fixture)" : "Not registered (UI fixture)" }
+            register = { fixture?.agentRegistered = true }
+            registration = { fixture?.agentRegistered == true ? .enabled : .notRegistered }
         }
         let preferences = try fixture?.preferences() ?? AppPreferences()
         let monitor: any MonitorService = fixture.map { $0 as any MonitorService } ?? service
-        model = try MonitorViewModel(service: monitor, preferences: preferences)
+        model = try MonitorViewModel(service: monitor, preferences: preferences,
+                                     registrationStatus: registration)
         settingsModel = try SettingsViewModel(
             service: monitor, preferences: preferences,
             helperURL: MCPConfiguration.helperURL(in: bundle),
-            registrationStatus: status, registerAgent: register
+            registrationStatus: status, registerAgent: register,
+            loginItem: fixture?.loginItem ?? .mainApp
         )
         super.init()
         model.onChange = { [weak self] in self?.render() }
@@ -52,6 +62,11 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
             Task { await self.model.tick() }
         }
         settingsModel.onPermissionsChanged = { [weak self] in self?.model.permissionsChanged() }
+        settingsModel.onRegistrationChanged = { [weak self] in
+            guard let self else { return }
+            render()
+            await model.tick()
+        }
     }
 
     public func agentDidReconnect() async {
@@ -60,11 +75,14 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
 
     public func applicationDidFinishLaunching(_: Notification) {
         buildMenu()
-        let main = MainWindowController(model: model)
+        let main = MainWindowController(model: model, register: { [weak self] in
+            Task { await self?.settingsModel.register() }
+        }, openLoginItems: openLoginItems)
         mainWindow = main
         main.visibilityChanged = { [weak self] in self?.updateVisibility() }
         main.focusChanged = { [weak self] in self?.updateFocus() }
         syncMenuBar()
+        render()
         openMainWindow()
     }
 
@@ -83,6 +101,9 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
 
     public func applicationDidBecomeActive(_: Notification) {
         updateFocus()
+        render()
+        settingsWindow?.render()
+        Task { await model.tick() }
     }
 
     public func applicationDidResignActive(_: Notification) {
@@ -128,10 +149,22 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
         Task { await settingsModel.refresh() }
     }
 
+    @objc private func showAbout() {
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "procglint",
+            .applicationVersion: AppVersion.description(info: bundle.infoDictionary),
+            .version: "",
+        ])
+    }
+
     private func buildMenu() {
         let menu = NSMenu()
-        let app = NSMenuItem()
-        let submenu = NSMenu()
+        let app = NSMenuItem(title: "procglint", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "procglint")
+        let about = NSMenuItem(title: "About procglint", action: #selector(showAbout), keyEquivalent: "")
+        about.target = self
+        submenu.addItem(about)
+        submenu.addItem(.separator())
         let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         submenu.addItem(settings)

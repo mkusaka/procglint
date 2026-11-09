@@ -33,9 +33,17 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.mkusaka.procglint
         EXECUTABLE_NAME: procglint-gui
         INFOPLIST_FILE: Config/Info.plist
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.0.0"
         BUILD_VERSION: "1"
     postBuildScripts:
+      - name: Stamp git commit
+        script: |
+          set -eu
+          cd "$SRCROOT"
+          commit="$(git rev-parse --short HEAD 2>/dev/null)" || commit=unknown
+          if [ "$commit" != unknown ] && [ -n "$(git status --porcelain)" ]; then commit="$commit-dirty"; fi
+          /usr/libexec/PlistBuddy -c "Set :ProcglintGitCommit $commit" "$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+        basedOnDependencyAnalysis: false
       # Copy MCP config must refer to a real bundled executable, even in the UI test app.
       - name: Embed MCP helper
         script: |
