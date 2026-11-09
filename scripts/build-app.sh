@@ -44,13 +44,14 @@ done
 binary_dir="$("${build[@]}" --show-bin-path)"
 app="$PWD/build/Procglint.app"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Library/LaunchAgents"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Library/LaunchAgents" "$app/Contents/Resources"
 install -m 755 "$binary_dir/procglint-gui" "$app/Contents/MacOS/procglint-gui"
 for helper in procglint-agent procglint-mcp procglint; do
   install -m 755 "$binary_dir/$helper" "$app/Contents/Helpers/$helper"
 done
 cp Config/io.github.mkusaka.procglint.agent.plist "$app/Contents/Library/LaunchAgents/"
 cp Config/Info.plist "$app/Contents/Info.plist"
+cp Config/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $marketing_version" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_version" "$app/Contents/Info.plist"
 commit="$(git rev-parse --short HEAD 2>/dev/null)" || commit=unknown
