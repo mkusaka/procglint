@@ -8,7 +8,9 @@ func render(_ size: CGFloat) -> Data {
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
     let s = size / 1024
-    func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: x * s, y: y * s) }
+    func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+        NSPoint(x: x * s, y: y * s)
+    }
 
     // macOS icon grid: 824pt body inside a 1024 canvas.
     let body = NSRect(x: 100 * s, y: 100 * s, width: 824 * s, height: 824 * s)
@@ -70,6 +72,7 @@ for base in [16, 32, 128, 256, 512] {
     try render(CGFloat(base)).write(to: iconset.appendingPathComponent("icon_\(base)x\(base).png"))
     try render(CGFloat(base * 2)).write(to: iconset.appendingPathComponent("icon_\(base)x\(base)@2x.png"))
 }
+
 let task = Process()
 task.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
 task.arguments = ["-c", "icns", iconset.path, "-o", root.appendingPathComponent("Config/AppIcon.icns").path]
