@@ -116,7 +116,7 @@ private final class RegistrationSpy {
     #expect(!settings.opensAtLogin)
     #expect(settings.message.contains("Cannot register"))
     spy.status = .notFound
-    #expect(settings.loginItemHint.contains("reinstall"))
+    #expect(settings.loginItemHint.isEmpty)
 }
 
 @MainActor

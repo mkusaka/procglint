@@ -225,9 +225,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         agentBanner.isHidden = !model.showsAgentBanner
         loginItems.isHidden = model.registrationStatus() != .requiresApproval
         switch model.registrationStatus() {
-        case .notRegistered: agentBannerDetail.stringValue = "Register the agent to start monitoring; registration only happens when you click below."
+        // SMAppService reports .notFound for a bundled agent that has never been registered.
+        case .notRegistered, .notFound: agentBannerDetail.stringValue = "Register the agent to start monitoring; registration only happens when you click below."
         case .requiresApproval: agentBannerDetail.stringValue = "Allow procglint in System Settings → General → Login Items, then return to the app."
-        case .notFound: agentBannerDetail.stringValue = "The bundled agent was not found — reinstall the complete Procglint.app."
         case .enabled: agentBannerDetail.stringValue = "The agent is registered but not responding; register it again or check Settings for diagnostics."
         }
         table.isHidden = !model.agentReachable

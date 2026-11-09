@@ -103,8 +103,8 @@ final class SettingsViewModel {
     var loginItemHint: String {
         switch loginItem.status() {
         case .requiresApproval: "Approve procglint in System Settings → General → Login Items."
-        case .notFound: "Login item not found — reinstall the complete Procglint.app."
-        case .enabled, .notRegistered: ""
+        // .notFound is also what SMAppService reports before the first registration.
+        case .enabled, .notRegistered, .notFound: ""
         }
     }
 
