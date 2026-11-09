@@ -6,7 +6,8 @@ import Testing
 private func fixtureSnapshot() throws -> Snapshot {
     let date = Date(timeIntervalSince1970: 1000)
     let system = SystemMetrics(cpuPercent: .warmingUp, physicalMemoryBytes: 4096, pageSize: 16384, memoryUsedBytes: 1024,
-                               wiredBytes: 128, compressedBytes: 128, activeBytes: 768, inactiveBytes: 512, freeBytes: 2560)
+                               wiredBytes: 128, compressedBytes: 128, activeBytes: 768, inactiveBytes: 512, freeBytes: 2560,
+                               memoryPressure: .ok(.critical), swapUsedBytes: .ok(10_400_000_000), swapTotalBytes: .ok(12_000_000_000))
     let process = try ProcessSample(processKey: ProcessKey("p1.boot-a.42.1"), pid: 42, name: "worker", uid: 501, user: "tester",
                                     isOwn: true, status: .ok, cpuPercent: .warmingUp, cpuTimeNS: 9_007_199_254_740_993,
                                     footprintBytes: .ok(1024), rssBytes: .permissionDenied, diskReadBytes: .ok(0),
@@ -71,6 +72,10 @@ struct CLIHelpersTests {
         #expect(row["disk_write_bps_status"] == "unsupported")
         #expect(row["disk_read_bytes"] == "0.0")
         #expect(row["system_cpu_percent"] == "")
+        #expect(row["memory_pressure"] == "critical")
+        #expect(row["memory_pressure_status"] == "ok")
+        #expect(row["swap_used_bytes"] == "10400000000.0")
+        #expect(row["swap_total_bytes_status"] == "ok")
         #expect(row["interval_ms"] == "")
         #expect(row["cpu_time_ns"] == "9007199254740993")
         #expect(row["sampled_at"] == "1970-01-01T00:16:40.000Z")
@@ -114,6 +119,26 @@ struct CLIHelpersTests {
         #expect(summary.contains("CPU warming_up"))
         #expect(summary.contains("Sampling: idle, effective interval none"))
         #expect(summary.contains("denied=1"))
+    }
+
+    @Test func statusIncludesPressureSwapAndExistingDiagnostics() throws {
+        let status = try fixtureStatus()
+        var system = try fixtureSnapshot().system
+        let text = statusSummary(status, system: system)
+        #expect(text.contains("Memory pressure: Critical; Swap: 10400000000 bytes used of 12000000000 bytes"))
+        #expect(text.contains("Sampling: idle, effective interval none"))
+        let json = try jsonOutput(CLIStatus(status: status, system: system))
+        #expect(json.contains("\"collections_total\":\"9007199254740993\""))
+        #expect(json.contains("\"memory_pressure\":{\"status\":\"ok\",\"value\":\"critical\"}"))
+        #expect(json.contains("\"swap_used_bytes\":{\"status\":\"ok\",\"value\":10400000000}"))
+        #expect(statusSummary(status).contains("Memory pressure: Unavailable; Swap: unavailable (unsupported)"))
+        #expect(try jsonOutput(CLIStatus(status: status, system: nil)).contains("\"system\":null"))
+        system.memoryPressure = .unsupported
+        system.swapUsedBytes = .permissionDenied
+        #expect(statusSummary(status, system: system).contains("Memory pressure: Unavailable; Swap: unavailable (permission_denied)"))
+        system.memoryPressure = .ok(.normal)
+        system.swapUsedBytes = .ok(0)
+        #expect(statusSummary(status, system: system).contains("Memory pressure: Normal; Swap: 0 bytes"))
     }
 
     @Test func findsAppFromHelperPathNotMainBundle() {

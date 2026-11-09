@@ -15,8 +15,14 @@ public final class DarwinProcessSource: SamplingProcessSource {
     public let physicalMemory: UInt64
     public let pageSize: UInt64
     public let machTimebase: MachTimebase
+    private let readPressure: @Sendable (inout Int32) -> Int32
+    private let readSwap: @Sendable (inout xsw_usage) -> Int32
 
-    public init() throws {
+    public init(readPressure: @escaping @Sendable (inout Int32) -> Int32 = { pg_memory_pressure(&$0) },
+                readSwap: @escaping @Sendable (inout xsw_usage) -> Int32 = { pg_swap_usage(&$0) }) throws
+    {
+        self.readPressure = readPressure
+        self.readSwap = readSwap
         var timebase = mach_timebase_info_data_t()
         try Self.checkMach(pg_timebase(&timebase))
         guard timebase.numer > 0, timebase.denom > 0 else {
@@ -143,6 +149,25 @@ public final class DarwinProcessSource: SamplingProcessSource {
         try Self.checkMach(pg_host_vm(&vm))
         return RawVMStatistics(activePages: vm.active, inactivePages: vm.inactive, wiredPages: vm.wired,
                                compressorPages: vm.compressor, freePages: vm.free)
+    }
+
+    func systemMemory() -> SystemMemorySample {
+        var level: Int32 = 0
+        let pressureError = readPressure(&level)
+        let pressure: MemoryPressure? = switch level {
+        case 1: .normal
+        case 2: .warning
+        case 4: .critical
+        default: nil
+        }
+        var swap = xsw_usage()
+        let swapError = readSwap(&swap)
+        let unavailable: Metric = swapError == EACCES || swapError == EPERM ? .permissionDenied : .unsupported
+        let validSwap = swapError == 0 && swap.xsu_used <= swap.xsu_total
+        let pressureMetric: MemoryPressureMetric = pressureError == 0 ? pressure.map(MemoryPressureMetric.ok) ?? .unsupported : .unsupported
+        return SystemMemorySample(pressure: pressureMetric,
+                                  swapUsed: validSwap ? .ok(Double(swap.xsu_used)) : unavailable,
+                                  swapTotal: validSwap ? .ok(Double(swap.xsu_total)) : unavailable)
     }
 
     public func bootSessionID() -> String {

@@ -37,11 +37,41 @@ enum Display {
         return error.localizedDescription
     }
 
+    static func memoryBytes(_ value: Double) -> String {
+        guard value.isFinite, value >= 0 else { return "—" }
+        // Match installed RAM capacities and Activity Monitor's memory-style GB labels.
+        let units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"]
+        var scaled = value
+        var unit = 0
+        while scaled >= 1024, unit < units.count - 1 {
+            scaled /= 1024
+            unit += 1
+        }
+        return String(format: scaled.rounded() == scaled ? "%.0f %@" : "%.1f %@",
+                      locale: Locale(identifier: "en_US_POSIX"), scaled, units[unit])
+    }
+
+    static func pressure(_ header: SnapshotHeader?) -> String {
+        guard let header, header.status != .unavailable, let pressure = header.system.memoryPressure.value else {
+            return "Memory pressure: Unavailable"
+        }
+        return "Memory pressure: \(pressure.rawValue.capitalized)"
+    }
+
     static func summary(_ header: SnapshotHeader?) -> String {
-        guard let header, header.status != .unavailable else { return "CPU — · Memory — · wired — · compressed — · unavailable" }
+        guard let header, header.status != .unavailable else {
+            return "\(pressure(nil))\nUsed — of — · Swap — · Compressed —\nCPU — · unavailable"
+        }
         let system = header.system
         let cpu = metric(system.cpuPercent, format: percent)
-        return "CPU \(cpu.text)\(cpu.reason.map { " (\($0))" } ?? "") · Memory \(bytes(Double(system.memoryUsedBytes)))/\(bytes(Double(system.physicalMemoryBytes))) · wired \(bytes(Double(system.wiredBytes))) · compressed \(bytes(Double(system.compressedBytes))) · \(header.status.rawValue)"
+        let swap = metric(system.swapUsedBytes, format: memoryBytes)
+        let swapText = swap.text + (swap.reason.map { " (\($0))" } ?? "")
+        return "\(pressure(header))\nUsed \(memoryBytes(Double(system.memoryUsedBytes))) of \(memoryBytes(Double(system.physicalMemoryBytes))) · Swap \(swapText) · Compressed \(memoryBytes(Double(system.compressedBytes)))\nCPU \(cpu.text)\(cpu.reason.map { " (\($0))" } ?? "") · \(header.status.rawValue)"
+    }
+
+    static func summaryTooltip(_ header: SnapshotHeader?) -> String {
+        guard let header, header.status != .unavailable else { return "System memory unavailable" }
+        return "Wired: \(memoryBytes(Double(header.system.wiredBytes)))\nMemory pressure status: \(header.system.memoryPressure.status.rawValue)\nSwap total: \(metric(header.system.swapTotalBytes, format: memoryBytes).text)"
     }
 }
 
@@ -52,7 +82,7 @@ enum ProcessColumn: String, CaseIterable {
         switch self {
         case .name: "Name"
         case .cpu: "CPU"
-        case .footprint: "Footprint"
+        case .footprint: "Memory"
         case .readRate: "Read/s"
         case .writeRate: "Write/s"
         case .pid: "PID"
@@ -62,6 +92,10 @@ enum ProcessColumn: String, CaseIterable {
         case .readBytes: "Read total"
         case .writtenBytes: "Written total"
         }
+    }
+
+    var tooltip: String? {
+        self == .footprint ? "Same as Activity Monitor's Memory column (phys_footprint): memory this process is charged for, including compressed and swapped pages. RSS (optional column) counts shared pages and is usually misleading." : nil
     }
 
     var optional: Bool {

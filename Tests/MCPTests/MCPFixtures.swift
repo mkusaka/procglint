@@ -13,7 +13,8 @@ func sample(name: String = "worker") throws -> ProcessSample {
 
 func makeSnapshot(name: String = "worker") throws -> Snapshot {
     let system = SystemMetrics(cpuPercent: .ok(25), physicalMemoryBytes: 4096, pageSize: 16384, memoryUsedBytes: 1024,
-                               wiredBytes: 128, compressedBytes: 128, activeBytes: 768, inactiveBytes: 512, freeBytes: 2560)
+                               wiredBytes: 128, compressedBytes: 128, activeBytes: 768, inactiveBytes: 512, freeBytes: 2560,
+                               memoryPressure: .ok(.warning), swapUsedBytes: .ok(1024), swapTotalBytes: .ok(2048))
     return try Snapshot(agentInstanceID: "agent-a", snapshotID: "agent-a-1", sampledAt: testDate, intervalMS: nil, ageMS: 0,
                         status: .warmingUp, coverage: Coverage(enumerated: 1, sampled: 1), system: system, processes: [sample(name: name)])
 }
@@ -21,6 +22,8 @@ func makeSnapshot(name: String = "worker") throws -> Snapshot {
 actor TestMonitor: MonitorService {
     var failure: AgentError?
     var largeName: String?
+    var snapshotFailure: AgentError?
+    var unavailableMemory = false
     var calls: [(String, JSONValue)] = []
     var blocked = false
     let clock = FakeClock()
@@ -30,6 +33,11 @@ actor TestMonitor: MonitorService {
         self.failure = failure
         self.largeName = largeName
         self.blocked = blocked
+    }
+
+    func configureMemory(unavailable: Bool = false, snapshotFailure: AgentError? = nil) {
+        unavailableMemory = unavailable
+        self.snapshotFailure = snapshotFailure
     }
 
     func waitForCalls(_ count: Int) async {
@@ -57,7 +65,16 @@ actor TestMonitor: MonitorService {
 
     func snapshot(top: Int, sort: ProcessSort) async throws -> Snapshot {
         try await record("get_snapshot", ["top": .number(.init(top)), "sort": .string(sort.rawValue)])
-        return try makeSnapshot(name: largeName ?? "worker")
+        if let snapshotFailure {
+            throw snapshotFailure
+        }
+        var snapshot = try makeSnapshot(name: largeName ?? "worker")
+        if unavailableMemory {
+            snapshot.system.memoryPressure = .unsupported
+            snapshot.system.swapUsedBytes = .unsupported
+            snapshot.system.swapTotalBytes = .unsupported
+        }
+        return snapshot
     }
 
     func listProcesses(_ query: ProcessQuery) async throws -> ProcessPage {

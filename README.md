@@ -7,7 +7,7 @@ A lightweight process monitor for Apple Silicon Macs (macOS 15+). One per-user a
 
 ## Features
 
-- Process CPU, cumulative CPU time, memory footprint and RSS, attributed disk I/O counters/rates, PID and owner; system CPU and defined VM memory statistics.
+- Process CPU, cumulative CPU time, Memory (footprint) and optional RSS, attributed disk I/O counters/rates, PID and owner; system CPU, memory pressure, swap usage and defined VM memory statistics.
 - Search, filter, sort and choose columns; inspect details, pin processes and read bounded history with explicit gaps for unobserved time.
 - Optional CPU/memory menu-bar display. Default updates are 5 seconds for the window and 10 seconds for the menu bar; no periodic sampling without an active lease.
 - Shared stdio MCP bridge: read-only, own processes, no paths by default; opt-in bounded observations, configuration and termination.
@@ -42,6 +42,14 @@ For a source-built app, run `scripts/build-app.sh` (Release, ad-hoc signed by de
 
 The process table fills when the background agent is available. If it cannot be reached, the main-window banner explains how to register or approve it; **Settings…** includes diagnostics and the same registration action.
 
+### Which memory numbers matter?
+
+Start with **Memory pressure: Normal / Warning / Critical** in the header. Its green/yellow/red badge also names the state, so colour is not the only signal. Warning or Critical means macOS is having more trouble meeting memory demand; high memory usage alone is not proof of trouble.
+
+The next line shows **Used … of … · Swap … · Compressed …** in memory-style GB/MB (1024-based, matching installed RAM capacities). Swap is memory stored on disk; compression saves RAM. A nonzero swap value can remain after pressure subsides, and compressed memory alone is not a fault. Wired memory is in the header tooltip rather than the main line. The system chart remains **Memory used / physical**, using the existing active + wired + compressor-page definition (not a reconstruction of Activity Monitor's Used total).
+
+The default process **Memory** column is unchanged `ri_phys_footprint`, the same measure as Activity Monitor's Memory column: memory charged to that process, including compressed and swapped pages. Its header tooltip explains this. **RSS** remains optional; it counts shared pages and is usually misleading when comparing process memory costs. The inspector calls this **Memory (footprint)**. JSON/MCP still use `footprint_bytes`, and sorting/default columns have not changed. Unavailable pressure or swap is explicit, never Normal or zero.
+
 **Settings… → Open procglint at login** optionally opens the GUI at login (off by default). This is separate from background-agent registration; MCP can use the agent without opening the GUI. If macOS requests approval, use the hint and **Open Login Items…** button in Settings.
 
 Choose **procglint → About procglint** to see the marketing version and build commit, for example `1.0.0 (abc1234)`. `procglint --version` reports the same bundle metadata without contacting the agent; source builds append `-dirty` for local changes, and missing metadata is shown as `unknown`.
@@ -64,7 +72,7 @@ The packaged CLI is `/Applications/Procglint.app/Contents/Helpers/procglint`. Us
 
 | Command | Purpose |
 | --- | --- |
-| `procglint status [--json]` | Inspect the shared agent's sampling state, overhead and diagnostics; human-readable by default. |
+| `procglint status [--json]` | Inspect memory pressure/swap and the shared agent's sampling state, overhead and diagnostics; human-readable by default. |
 | `procglint doctor` | Report agent registration/reachability and recovery steps, including Login Items approval. |
 | `procglint export snapshot [--json\|--csv] [--all]` | Export the top 50 own processes by CPU; `--all` pages through every permitted process in one snapshot. |
 | `procglint export history [--series system\|<process_key> ...] [--json\|--csv]` | Export retained history; defaults to `system`. |
@@ -76,6 +84,8 @@ The packaged CLI is `/Applications/Procglint.app/Contents/Helpers/procglint`. Us
 /Applications/Procglint.app/Contents/Helpers/procglint export snapshot --csv
 /Applications/Procglint.app/Contents/Helpers/procglint export history --series system --json
 ```
+
+`status --json` preserves the existing diagnostics and adds `system` from a shared snapshot read (`null` if that read fails). It does not start a separate sampler. Snapshot JSON/CSV exports also include memory pressure and swap.
 
 Exports default to JSON. Missing CSV metrics are empty, with separate status columns, never zero. `--all` does not bypass app permissions: CLI process/path scope is capped by the `include_system` / `include_paths` settings. The CLI shares the agent and does not run its own periodic sampler. History cannot recover time when a process was not tracked.
 

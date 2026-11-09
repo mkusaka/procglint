@@ -5,6 +5,7 @@
 #include <mach/mach_time.h>
 #include <stdint.h>
 #include <sys/resource.h>
+#include <sys/sysctl.h>
 
 // POSIX wrappers return an errno value (zero on success); Mach wrappers return kern_return_t.
 int pg_list_pids(int32_t *buffer, int capacity, int *count);
@@ -51,5 +52,7 @@ kern_return_t pg_timebase(mach_timebase_info_t info);
 kern_return_t pg_page_size(vm_size_t *size);
 int pg_boot_session(char *buffer, size_t *size);
 int pg_physical_memory(uint64_t *size);
+int pg_memory_pressure(int32_t *level);
+int pg_swap_usage(struct xsw_usage *usage);
 
 #endif

@@ -64,6 +64,7 @@ public actor Sampler {
         }
         let ticks = try source.hostCPUTicks()
         let vm = try source.vmStatistics()
+        let memory = (source as? any SamplingProcessSource)?.systemMemory() ?? SystemMemorySample()
         var coverage = Coverage(enumerated: census?.count ?? 0)
         var processes: [ProcessSample] = []
         processes.reserveCapacity(coverage.enumerated)
@@ -132,7 +133,8 @@ public actor Sampler {
             cpuPercent: systemCPU(ticks, previous: previousCPU), physicalMemoryBytes: source.physicalMemory,
             pageSize: page, memoryUsedBytes: (vm.activePages + vm.wiredPages + vm.compressorPages) * page,
             wiredBytes: vm.wiredPages * page, compressedBytes: vm.compressorPages * page,
-            activeBytes: vm.activePages * page, inactiveBytes: vm.inactivePages * page, freeBytes: vm.freePages * page
+            activeBytes: vm.activePages * page, inactiveBytes: vm.inactivePages * page, freeBytes: vm.freePages * page,
+            memoryPressure: memory.pressure, swapUsedBytes: memory.swapUsed, swapTotalBytes: memory.swapTotal
         )
         // A failed census is not an empty successful sweep: keep baselines and live identities.
         var status: SnapshotStatus = .unavailable

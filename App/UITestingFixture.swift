@@ -53,7 +53,8 @@ final class UITestingFixture: MonitorService {
             system: SystemMetrics(cpuPercent: .ok(25), physicalMemoryBytes: 8_589_934_592, pageSize: 16384,
                                   memoryUsedBytes: 4_294_967_296, wiredBytes: 1_073_741_824,
                                   compressedBytes: 536_870_912, activeBytes: 2_684_354_560,
-                                  inactiveBytes: 1_073_741_824, freeBytes: 3_221_225_472),
+                                  inactiveBytes: 1_073_741_824, freeBytes: 3_221_225_472,
+                                  memoryPressure: .ok(.normal), swapUsedBytes: .ok(1_073_741_824), swapTotalBytes: .ok(2_147_483_648)),
             processes: rows
         )
         store = SnapshotStore(clock: FakeClock())

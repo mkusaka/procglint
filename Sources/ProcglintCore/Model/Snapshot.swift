@@ -36,9 +36,14 @@ public struct SystemMetrics: Sendable, Codable, Equatable {
     public var activeBytes: UInt64
     public var inactiveBytes: UInt64
     public var freeBytes: UInt64
+    public var memoryPressure: MemoryPressureMetric
+    public var swapUsedBytes: Metric
+    public var swapTotalBytes: Metric
 
     public init(cpuPercent: Metric, physicalMemoryBytes: UInt64, pageSize: UInt64, memoryUsedBytes: UInt64,
-                wiredBytes: UInt64, compressedBytes: UInt64, activeBytes: UInt64, inactiveBytes: UInt64, freeBytes: UInt64)
+                wiredBytes: UInt64, compressedBytes: UInt64, activeBytes: UInt64, inactiveBytes: UInt64, freeBytes: UInt64,
+                memoryPressure: MemoryPressureMetric = .unsupported, swapUsedBytes: Metric = .unsupported,
+                swapTotalBytes: Metric = .unsupported)
     {
         self.cpuPercent = cpuPercent
         self.physicalMemoryBytes = physicalMemoryBytes
@@ -49,6 +54,28 @@ public struct SystemMetrics: Sendable, Codable, Equatable {
         self.activeBytes = activeBytes
         self.inactiveBytes = inactiveBytes
         self.freeBytes = freeBytes
+        self.memoryPressure = memoryPressure
+        self.swapUsedBytes = swapUsedBytes
+        self.swapTotalBytes = swapTotalBytes
+    }
+
+    /// A 1.0.0 agent can outlive an upgrade by its idle grace period; its snapshots lack the memory-pressure fields.
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            cpuPercent: values.decode(Metric.self, forKey: .cpuPercent),
+            physicalMemoryBytes: values.decode(UInt64.self, forKey: .physicalMemoryBytes),
+            pageSize: values.decode(UInt64.self, forKey: .pageSize),
+            memoryUsedBytes: values.decode(UInt64.self, forKey: .memoryUsedBytes),
+            wiredBytes: values.decode(UInt64.self, forKey: .wiredBytes),
+            compressedBytes: values.decode(UInt64.self, forKey: .compressedBytes),
+            activeBytes: values.decode(UInt64.self, forKey: .activeBytes),
+            inactiveBytes: values.decode(UInt64.self, forKey: .inactiveBytes),
+            freeBytes: values.decode(UInt64.self, forKey: .freeBytes),
+            memoryPressure: values.decodeIfPresent(MemoryPressureMetric.self, forKey: .memoryPressure) ?? .unsupported,
+            swapUsedBytes: values.decodeIfPresent(Metric.self, forKey: .swapUsedBytes) ?? .unsupported,
+            swapTotalBytes: values.decodeIfPresent(Metric.self, forKey: .swapTotalBytes) ?? .unsupported
+        )
     }
 }
 
