@@ -22,12 +22,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     let killProcess = NSButton(title: "Force Quit (SIGKILL)", target: nil, action: nil)
     let loadMore = NSButton(title: "Load more", target: nil, action: nil)
     let count = NSTextField(labelWithString: "")
+    let agentBanner = NSBox()
+    let agentBannerDetail = NSTextField(wrappingLabelWithString: "")
+    let registerAgent = NSButton(title: "Register agent…", target: nil, action: nil)
+    let loginItems = NSButton(title: "Open Login Items…", target: nil, action: nil)
+    private let register: @MainActor () -> Void
+    private let openLoginItems: @MainActor () -> Void
     var visibilityChanged: (@MainActor () -> Void)?
     var focusChanged: (@MainActor () -> Void)?
     private var renderedRows: [ProcessSample] = []
 
-    init(model: MonitorViewModel) {
+    init(model: MonitorViewModel, register: @escaping @MainActor () -> Void = {},
+         openLoginItems: @escaping @MainActor () -> Void = {})
+    {
         self.model = model
+        self.register = register
+        self.openLoginItems = openLoginItems
         dataSource = ProcessTableDataSource(model: model)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -140,12 +150,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         summaryBar.distribution = .fill
         summaryBar.alignment = .top
         summaryBar.spacing = 16
-        let root = verticalStack([summaryBar, split])
+        let root = verticalStack([onboardingBanner(), summaryBar, split])
+        agentBanner.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         split.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         summaryBar.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         let content = NSView()
         inset(root, in: content)
         window.contentView = content
+    }
+
+    private func onboardingBanner() -> NSView {
+        agentBanner.boxType = .custom
+        agentBanner.titlePosition = .noTitle
+        agentBanner.borderColor = .controlAccentColor
+        agentBanner.fillColor = NSColor.controlAccentColor.withAlphaComponent(0.1)
+        agentBanner.cornerRadius = 8
+        agentBanner.contentViewMargins = NSSize(width: 12, height: 12)
+        agentBanner.setAccessibilityIdentifier("agentOnboardingBanner")
+        let explanation = NSTextField(wrappingLabelWithString: "procglint needs its background agent to show processes.")
+        explanation.font = .systemFont(ofSize: 15, weight: .semibold)
+        explanation.setAccessibilityIdentifier("agentOnboardingMessage")
+        agentBannerDetail.setAccessibilityIdentifier("agentOnboardingDetail")
+        registerAgent.target = self
+        registerAgent.action = #selector(registerBackgroundAgent)
+        registerAgent.setAccessibilityIdentifier("registerAgent")
+        loginItems.target = self
+        loginItems.action = #selector(showLoginItems)
+        loginItems.setAccessibilityIdentifier("agentLoginItems")
+        let content = verticalStack([explanation, agentBannerDetail, NSStackView(views: [registerAgent, loginItems])])
+        for label in [explanation, agentBannerDetail] {
+            label.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        }
+        if let container = agentBanner.contentView {
+            inset(content, in: container, by: 0)
+        }
+        return agentBanner
+    }
+
+    @objc private func registerBackgroundAgent() {
+        register()
+    }
+
+    @objc private func showLoginItems() {
+        openLoginItems()
     }
 
     private func inspectorView() -> NSView {
@@ -173,6 +220,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     func render() {
+        agentBanner.isHidden = !model.showsAgentBanner
+        loginItems.isHidden = model.registrationStatus() != .requiresApproval
+        switch model.registrationStatus() {
+        case .notRegistered: agentBannerDetail.stringValue = "Register the agent to start monitoring; registration only happens when you click below."
+        case .requiresApproval: agentBannerDetail.stringValue = "Allow procglint in System Settings → General → Login Items, then return to the app."
+        case .notFound: agentBannerDetail.stringValue = "The bundled agent was not found — reinstall the complete Procglint.app."
+        case .enabled: agentBannerDetail.stringValue = "The agent is registered but not responding; register it again or check Settings for diagnostics."
+        }
+        table.isHidden = !model.agentReachable
+        table.usesAlternatingRowBackgroundColors = model.agentReachable && !model.rows.isEmpty
+        count.isHidden = !model.agentReachable
         summary.stringValue = model.summary
         summary.toolTip = model.message
         if renderedRows != model.rows {

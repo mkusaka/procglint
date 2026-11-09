@@ -12,6 +12,12 @@ do {
     exit(64)
 }
 
+if command == .version {
+    let executable = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
+    try? FileHandle.standardOutput.write(contentsOf: Data(versionOutput(executable: executable).utf8))
+    exit(0)
+}
+
 if command == .help {
     try? FileHandle.standardOutput.write(contentsOf: Data((CLICommand.usage + "\n").utf8))
     exit(0)
@@ -24,6 +30,7 @@ do {
     let output: String
     switch command {
     case .help: output = CLICommand.usage + "\n"
+    case .version: output = versionOutput(executable: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]))
     case let .status(json):
         let status = try await client.status()
         output = try json ? jsonOutput(status) : statusSummary(status)

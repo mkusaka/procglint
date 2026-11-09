@@ -8,6 +8,7 @@ enum ExportFormat: Equatable {
 
 enum CLICommand: Equatable {
     case help
+    case version
     case status(json: Bool)
     case doctor
     case snapshot(format: ExportFormat, all: Bool)
@@ -19,12 +20,16 @@ enum CLICommand: Equatable {
            procglint export snapshot [--json|--csv] [--all]
            procglint export history [--series system|<process_key> ...] [--json|--csv]
            procglint --help
+           procglint --version
     Exports default to JSON. Snapshot defaults to the top 50 own processes by CPU;
     --all exports every permitted process, paging within one snapshot.
     History defaults to system. Missing CSV metrics are empty, not zero.
     """
 
     static func parse(_ arguments: [String]) throws -> Self {
+        if arguments == ["--version"] {
+            return .version
+        }
         let helpPrefixes = [[], ["status"], ["doctor"], ["export"], ["export", "snapshot"], ["export", "history"]]
         if arguments.last == "--help", helpPrefixes.contains(Array(arguments.dropLast())) {
             return .help
@@ -135,6 +140,15 @@ func containingApp(executable: URL) -> URL? {
     guard helper.lastPathComponent == "Helpers", contents.lastPathComponent == "Contents",
           app.pathExtension.lowercased() == "app" else { return nil }
     return app
+}
+
+func versionOutput(executable: URL) -> String {
+    let info = containingApp(executable: executable).flatMap { Bundle(url: $0)?.infoDictionary }
+    let parts = ["CFBundleShortVersionString", "ProcglintGitCommit"].map { key in
+        let value = (info?[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty || value.hasPrefix("$(") ? "unknown" : value
+    }
+    return "procglint \(parts[0]) (\(parts[1]))\n"
 }
 
 func doctorReport(bundle: URL?, registration: AgentRegistration.Status?, agent: Result<MonitorStatus, any Error>) -> (text: String, healthy: Bool) {

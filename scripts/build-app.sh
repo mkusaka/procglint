@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-marketing_version="${MARKETING_VERSION-1.0}"
+marketing_version="${MARKETING_VERSION-1.0.0}"
 build_version="${BUILD_VERSION-1}"
 for version in "$marketing_version" "$build_version"; do
   if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
@@ -53,6 +53,9 @@ cp Config/io.github.mkusaka.procglint.agent.plist "$app/Contents/Library/LaunchA
 cp Config/Info.plist "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $marketing_version" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_version" "$app/Contents/Info.plist"
+commit="$(git rev-parse --short HEAD 2>/dev/null)" || commit=unknown
+if [[ "$commit" != unknown && -n "$(git status --porcelain)" ]]; then commit="$commit-dirty"; fi
+/usr/libexec/PlistBuddy -c "Set :ProcglintGitCommit $commit" "$app/Contents/Info.plist"
 
 signing=(--force --options runtime --sign "$identity")
 if [[ "$identity" != - ]]; then signing+=(--timestamp); fi

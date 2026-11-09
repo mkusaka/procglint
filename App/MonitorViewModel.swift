@@ -1,5 +1,6 @@
 import Foundation
 import ProcglintCore
+import ProcglintIPC
 
 @MainActor
 final class MonitorViewModel {
@@ -23,6 +24,13 @@ final class MonitorViewModel {
     private(set) var focused = true
     private(set) var focusUpdate: Task<Void, Never>?
     private(set) var terminating = false
+    private(set) var agentReachable = false
+    let registrationStatus: @MainActor () -> AgentRegistration.Status
+
+    var showsAgentBanner: Bool {
+        registrationStatus() != .enabled || !agentReachable
+    }
+
     private let clock: any MonotonicClock
     private var historySnapshotID: String?
     private var historySelectedKey: ProcessKey?
@@ -39,10 +47,13 @@ final class MonitorViewModel {
     var message = ""
     var onChange: (@MainActor () -> Void)?
 
-    init(service: any MonitorService, preferences: AppPreferences, clock: any MonotonicClock = SystemMonotonicClock()) throws {
+    init(service: any MonitorService, preferences: AppPreferences, clock: any MonotonicClock = SystemMonotonicClock(),
+         registrationStatus: @escaping @MainActor () -> AgentRegistration.Status = { .enabled }) throws
+    {
         self.service = service
         self.preferences = preferences
         self.clock = clock
+        self.registrationStatus = registrationStatus
         policy = try preferences.store.samplingPolicy()
         query = try ProcessQuery(filter: .all, limit: 200, fields: ProcessField.allCases.filter { $0 != .path })
     }
@@ -211,6 +222,7 @@ final class MonitorViewModel {
                     } while requested != query && windowVisible
                 } else {
                     header = try await service.snapshot(top: 1, sort: .cpu).header
+                    agentReachable = true
                 }
                 if let header {
                     if agentInstanceID != header.agentInstanceID {
@@ -289,6 +301,7 @@ final class MonitorViewModel {
     }
 
     func apply(_ page: ProcessPage, append: Bool = false) {
+        agentReachable = true
         let sameSnapshot = header?.snapshotID == page.snapshot.snapshotID && header?.agentInstanceID == page.snapshot.agentInstanceID
         guard page.snapshot.status != .unavailable else {
             header = page.snapshot
@@ -428,6 +441,7 @@ final class MonitorViewModel {
         message = Display.error(error)
         header = nil
         if let error = error as? AgentError, error.code == .agentUnavailable {
+            agentReachable = false
             leases.removeAll()
             agentInstanceID = nil
             message += " — Open Settings and register/enable the procglint agent."

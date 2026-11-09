@@ -31,12 +31,20 @@ brew install --cask mkusaka/tap/procglint
 This installs **Procglint.app** to `/Applications` and links `procglint` and `procglint-mcp` into Homebrew's `bin`. Then continue at step 2. Without Homebrew:
 
 1. Download the app ZIP from [GitHub Releases](https://github.com/mkusaka/procglint/releases), unzip it and move **Procglint.app** to `/Applications` before registering the agent.
-2. Open the app, then **Settings…** (⌘,) → **Register agent…** to explicitly register its per-user agent (`io.github.mkusaka.procglint.agent`).
-3. If registration requires approval, allow Procglint in **System Settings → General → Login Items & Extensions**, then check registration again. Use `procglint doctor` for registration state and recovery instructions.
+2. Open the app and click **Register agent…** in the banner above the process table (also available in **Settings…**, ⌘,) to explicitly register its per-user agent (`io.github.mkusaka.procglint.agent`). The app never registers the agent automatically.
+3. If approval is required, click **Open Login Items…** and allow Procglint in **System Settings → General → Login Items & Extensions**. Return to the app to re-check; the banner disappears once registration is enabled and the agent responds. Use `procglint doctor` for registration state and recovery instructions.
 
 The registered agent starts on demand; the GUI need not remain open for MCP use. With no clients it exits after a 60-second grace period. If unavailable, clients report an error instead of starting another sampler.
 
 For a source-built app, run `scripts/build-app.sh` (Release, ad-hoc signed by default; `--configuration debug` selects Debug, `--sign '<identity>'` selects a signing identity). It writes `build/Procglint.app`; move that complete app to `/Applications` before registration. `swift build` alone does not install/register an app or copy helpers into `/Applications`. See [Releasing](docs/RELEASING.md) for version overrides and release packaging.
+
+## Usage
+
+The process table fills when the background agent is available. If it cannot be reached, the main-window banner explains how to register or approve it; **Settings…** includes diagnostics and the same registration action.
+
+**Settings… → Open procglint at login** optionally opens the GUI at login (off by default). This is separate from background-agent registration; MCP can use the agent without opening the GUI. If macOS requests approval, use the hint and **Open Login Items…** button in Settings.
+
+Choose **procglint → About procglint** to see the marketing version and build commit, for example `1.0.0 (abc1234)`. `procglint --version` reports the same bundle metadata without contacting the agent; source builds append `-dirty` for local changes, and missing metadata is shown as `unknown`.
 
 ## Connect an MCP client
 

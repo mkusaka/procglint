@@ -9,6 +9,9 @@ final class SettingsWindowController: NSWindowController {
     let menuBar = NSButton(checkboxWithTitle: "Show CPU and memory in the menu bar", target: nil, action: nil)
     let adaptiveRefresh = NSButton(checkboxWithTitle: "Slow refresh when the main window is not focused", target: nil, action: nil)
     let registration = NSTextField(wrappingLabelWithString: "")
+    let launchAtLogin = NSButton(checkboxWithTitle: "Open procglint at login", target: nil, action: nil)
+    let loginItemHint = NSTextField(wrappingLabelWithString: "")
+    let loginItemApproval = NSButton(title: "Open Login Items…", target: nil, action: nil)
     let diagnostics = NSTextView()
     let feedback = NSTextField(wrappingLabelWithString: "")
     private var permissionButtons: [Permission: NSButton] = [:]
@@ -42,6 +45,12 @@ final class SettingsWindowController: NSWindowController {
         let copy = NSButton(title: "Copy MCP config", target: self, action: #selector(copyConfiguration))
         copy.setAccessibilityIdentifier("copyMCPConfig")
         menuBar.setAccessibilityIdentifier("menuBarToggle")
+        launchAtLogin.setAccessibilityIdentifier("launchAtLoginToggle")
+        launchAtLogin.target = self
+        launchAtLogin.action = #selector(toggleLaunchAtLogin)
+        loginItemHint.setAccessibilityIdentifier("launchAtLoginHint")
+        loginItemApproval.target = self
+        loginItemApproval.action = #selector(showLoginItems)
         adaptiveRefresh.setAccessibilityIdentifier("adaptiveRefreshToggle")
         adaptiveRefresh.toolTip = "Uses the next slower update interval, up to 10 seconds, while the visible main window is not active and key. Hidden windows stop their lease."
         adaptiveRefresh.target = self
@@ -71,9 +80,10 @@ final class SettingsWindowController: NSWindowController {
         diagnosticScroll.heightAnchor.constraint(equalToConstant: 180).isActive = true
         let stack = verticalStack([
             NSStackView(views: [NSTextField(labelWithString: "Update interval"), interval, NSTextField(labelWithString: "History"), history, apply]),
-            menuBar, adaptiveRefresh, registration, NSStackView(views: [register, unregister, loginItems]), NSTextField(labelWithString: "MCP permissions"),
+            menuBar, adaptiveRefresh, launchAtLogin, loginItemHint, loginItemApproval,
+            registration, NSStackView(views: [register, unregister, loginItems]), NSTextField(labelWithString: "MCP permissions"),
         ] + permissionViews + [note, copy, refresh, diagnosticScroll, feedback])
-        for view in [registration, note, diagnosticScroll, feedback] {
+        for view in [registration, loginItemHint, note, diagnosticScroll, feedback] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         window.contentView = scrollingContent(stack)
@@ -92,6 +102,11 @@ final class SettingsWindowController: NSWindowController {
         menuBar.state = model.preferences.menuBar ? .on : .off
         adaptiveRefresh.state = model.preferences.adaptiveRefresh ? .on : .off
         registration.stringValue = "Agent registration: \(model.registrationStatus())"
+        launchAtLogin.state = model.opensAtLogin ? .on : .off
+        launchAtLogin.isEnabled = !model.changingLoginItem
+        loginItemHint.stringValue = model.loginItemHint
+        loginItemHint.isHidden = model.loginItemHint.isEmpty
+        loginItemApproval.isHidden = model.loginItem.status() != .requiresApproval
         for (permission, button) in permissionButtons {
             button.state = model.permissions.contains(permission) ? .on : .off
         }
@@ -115,13 +130,18 @@ final class SettingsWindowController: NSWindowController {
         adaptiveRefreshChanged?()
     }
 
+    @objc private func toggleLaunchAtLogin() {
+        let enabled = launchAtLogin.state == .on
+        Task { await model.setOpensAtLogin(enabled) }
+    }
+
     @objc private func togglePermission(_ sender: NSButton) {
         guard let raw = sender.identifier?.rawValue, let permission = Permission(rawValue: raw) else { return }
         model.setPermission(permission, allowed: sender.state == .on)
     }
 
     @objc private func registerAgent() {
-        model.register(); Task { await model.refresh() }
+        Task { await model.register(); await model.refresh() }
     }
 
     @objc private func unregisterAgentService() {
@@ -130,6 +150,7 @@ final class SettingsWindowController: NSWindowController {
                 try await unregisterAgent()
                 model.message = model.registrationStatus()
             } catch { model.message = Display.error(error) }
+            await model.registrationChanged()
             await model.refresh()
         }
     }

@@ -355,6 +355,6 @@ func preferences() -> AppPreferences {
     #expect(try prefs.store.allowedPermissions().contains(.observe))
     settings.setPermission(.observe, allowed: false)
     #expect(try prefs.store.allowedPermissions().isEmpty)
-    settings.register()
+    await settings.register()
     #expect(registered)
 }
