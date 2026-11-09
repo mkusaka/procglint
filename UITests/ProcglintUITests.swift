@@ -153,7 +153,8 @@ final class ProcglintUITests: XCTestCase {
     func testAboutMenuAndLaunchAtLoginFixture() throws {
         try withApp { app, _ in
             XCTAssertTrue(app.windows["mainWindow"].waitForExistence(timeout: 10))
-            app.menuBars.menuBarItems.matching(NSPredicate(format: "label ==[c] %@", "procglint")).firstMatch.click()
+            // The application menu title is the process name, which differs between Xcode and release builds.
+            app.menuBars.menuBarItems.element(boundBy: 1).click()
             let about = app.menuItems["About procglint"]
             XCTAssertTrue(about.waitForExistence(timeout: 5))
             app.typeKey(.escape, modifierFlags: [])
