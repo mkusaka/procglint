@@ -78,9 +78,9 @@ Inputs below are tool `arguments`, not JSON-RPC envelopes. Unknown properties, w
 
 - `search`: nullable, case-insensitive name substring; all-digit input matches an exact PID.
 - `filter`: `mine` (default), `all`, `pinned`. `all` still respects the caller's scope; pinned targets are shared with the GUI.
-- `sort`: `cpu`, `footprint`, `rss`, `disk_read_bps`, `disk_write_bps`, `cpu_time`, `pid`, `name`. `order`: `desc` (default) or `asc`.
+- `sort`: `cpu`, `power`, `footprint`, `rss`, `disk_read_bps`, `disk_write_bps`, `cpu_time`, `pid`, `name`. `order`: `desc` (default) or `asc`.
 - `limit`: default 50, range 1–200. `cursor`: nullable, returned by the previous page. Pages stay on one `snapshot_id`; expired/foreign cursors return `invalid_cursor`. Restart paging rather than merging different snapshots. Keep search/filter/sort/order unchanged between pages.
-- `fields`: nullable array selecting process fields. `process_key` is always included. Names: `process_key`, `pid`, `ppid`, `name`, `uid`, `user`, `is_own`, `status`, `cpu_percent`, `cpu_time_ns`, `footprint_bytes`, `rss_bytes`, `disk_read_bytes`, `disk_written_bytes`, `disk_read_bps`, `disk_write_bps`, `start_time`, `path`.
+- `fields`: nullable array selecting process fields. `process_key` is always included. Names: `process_key`, `pid`, `ppid`, `name`, `uid`, `user`, `is_own`, `status`, `cpu_percent`, `power_mw`, `cpu_time_ns`, `footprint_bytes`, `rss_bytes`, `disk_read_bytes`, `disk_written_bytes`, `disk_read_bps`, `disk_write_bps`, `start_time`, `path`.
 
 Snapshot headers contain `agent_instance_id`, `snapshot_id`, `sampled_at`, `interval_ms`, `age_ms`, `status`, `coverage` and `system`. Coverage reports enumerated, sampled, permission-denied and exited-during-sample counts. `set_sampling_policy` replaces the whole policy, not a patch: first read `get_monitor_status.policy`, preserve unchanged values, and pass its `revision` as `expected_revision`. On `revision_conflict`, fetch and review again.
 
@@ -127,6 +127,29 @@ The agent reads argv only from `KERN_PROCARGS2`'s declared argument count, never
 
 Status reads still return diagnostics if the snapshot read fails, with `system: null`. The bridge uses the shared agent snapshot; it does not sample the OS or acquire a periodic lease.
 
+### Battery and process power
+
+Use `get_snapshot({ "sort": "power" })` or `list_processes({ "sort": "power", "fields": ["pid", "name", "power_mw"] })` to find the largest measured process power. `power_mw` is a numeric Metric in milliwatts: the change in `ri_energy_nj` divided by the actual per-process reading interval. The agent requests `RUSAGE_INFO_V6` in the existing single rusage call; only `EINVAL`/`ENOTSUP` retry V2, with power `unsupported`. Positive counters need two readings (`warming_up` initially, after identity/executable changes, counter resets or invalid intervals). Missing/zero energy counters, including unsupported Intel hardware, are `unsupported`; access denial is `permission_denied`. A positive counter with no increment can produce a real zero.
+
+`system.battery` is optional/absent on Macs with no battery. When present it has:
+
+| Field | Value |
+| --- | --- |
+| `percent` | Metric, 0–100 |
+| `is_charging`, `external_power` | Optional booleans; omitted when unknown |
+| `time_remaining_minutes` | Metric; 65535, negative, missing or invalid estimates are `unsupported`; to full while charging, otherwise remaining runtime |
+| `cycle_count` | Metric, count |
+| `health_percent` | Metric, full-charge / design capacity × 100 (not clamped) |
+| `design_capacity_mah`, `full_charge_capacity_mah` | Metrics, mAh; full-charge falls back to `AppleRawMaxCapacity` |
+| `system_power_mw`, `adapter_power_mw` | Metrics, mW, from `SystemLoad` / `SystemPowerIn` |
+| `battery_power_mw` | Signed Metric, mW; negative while discharging. Signed telemetry is retained; unsigned/missing telemetry uses `InstantAmperage × Voltage / 1000`. |
+
+The agent reads one `AppleSmartBattery` property dictionary at most every 10 seconds (including caching no-battery results), with capacity/health/cycle fields cached for the source lifetime. Missing numeric properties are `unsupported`, never zero. This uses no root privileges and no client-side sampler. `get_monitor_status.system` and CLI `status --json` share the same battery data. CLI text status shows a Battery line; `procglint export snapshot --sort power --csv` includes `power_mw` and its status, and `procglint show <pid>` displays watts.
+
+**Process power is OS-attributed energy, not battery-drain attribution or Activity Monitor's Energy Impact.** It does not include every display/device/system load, and process values need not sum to system or battery power. Do not convert it into a claimed percentage of battery consumption.
+
+System history points optionally add `system_power_mw` and `battery_percent` Metrics; tracked process points add `power_mw`. Older payloads decode without these fields (nil history/battery, `unsupported` process power). CLI history CSV includes all three with status columns. Gaps still mean no measurement, not zero.
+
 ### Observe only what you need
 
 1. Start with `get_snapshot`, then use `list_processes` / `get_process` to choose returned process keys.
@@ -151,7 +174,7 @@ A ticket is a capability, **not proof of human consent**. `signal_sent` means on
 { "value": null, "status": "warming_up" }
 ```
 
-A metric's `value` is non-null only for `status: "ok"`. Other statuses are `warming_up`, `permission_denied`, `exited`, `stale`, `unsupported`. Missing is **not zero**, and footprint is not a substitute for RSS. CPU and disk rates need two readings, so cold-start and newly seen processes can be `warming_up`.
+A metric's `value` is non-null only for `status: "ok"`. Other statuses are `warming_up`, `permission_denied`, `exited`, `stale`, `unsupported`. Missing is **not zero**, and footprint is not a substitute for RSS. CPU, power and disk rates need two readings, so cold-start and newly seen processes can be `warming_up`.
 
 Process CPU uses **100% per core** and can exceed 100%; system CPU is 0–100% across all cores. Disk I/O is attributed to a process, not a device-transfer meter. See [Performance and metrics](PERFORMANCE.md).
 

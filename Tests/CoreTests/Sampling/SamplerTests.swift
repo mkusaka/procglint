@@ -165,7 +165,7 @@ struct SamplerTests {
         #expect(row.status == .permissionDenied)
         #expect(row.cpuTimeNS == nil)
         for metric in [row.cpuPercent, row.footprintBytes, row.rssBytes, row.diskReadBytes,
-                       row.diskWrittenBytes, row.diskReadBps, row.diskWriteBps]
+                       row.diskWrittenBytes, row.diskReadBps, row.diskWriteBps, row.powerMW]
         {
             #expect(metric == .permissionDenied)
         }
@@ -291,15 +291,18 @@ struct SamplerTests {
         let clock = FakeClock()
         let source = SamplingProbe(clock: clock)
         source.fake.addProcess(pid: 42, process: process())
+        source.fake.update { $0.processes[42]?.rusage.energyNJ = 1_000_000_000 }
         source.update { $0.readingDelay = 1_000_000_000 }
         let sampler = try Sampler(source: source, clock: clock)
         _ = try await sampler.sample()
         clock.advance(by: 1_000_000_000)
         source.update { $0.readingDelay = 3_000_000_000 }
         source.fake.setRusage(pid: 42, rusage: process(cpu: 9_000_000_000).rusage)
+        source.fake.update { $0.processes[42]?.rusage.energyNJ = 9_000_000_000 }
         let snapshot = try await sampler.sample()
         #expect(snapshot.intervalMS == 2000)
         #expect(snapshot.processes.first?.cpuPercent == .ok(200))
+        #expect(snapshot.processes.first?.powerMW == .ok(2000))
     }
 
     @Test func identityIsRecheckedAfterLazyPathRead() async throws {

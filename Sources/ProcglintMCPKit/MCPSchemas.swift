@@ -45,6 +45,16 @@ enum Schema {
     static let metric = object(["value": nullable(number), "status": strings(MetricStatus.allCases.map(\.rawValue))], required: ["value", "status"])
     static let coverage = object(["enumerated": integer(0), "sampled": integer(0), "permission_denied": integer(0),
                                   "exited_during_sample": integer(0)], required: ["enumerated", "sampled", "permission_denied", "exited_during_sample"])
+    static let battery: JSONValue = {
+        var fields = Dictionary(uniqueKeysWithValues: ["percent", "time_remaining_minutes", "cycle_count", "health_percent",
+                                                       "design_capacity_mah", "full_charge_capacity_mah", "system_power_mw",
+                                                       "adapter_power_mw", "battery_power_mw"].map { ($0, metric) })
+        let required = fields.keys.sorted()
+        fields["is_charging"] = boolean
+        fields["external_power"] = boolean
+        return object(fields, required: required)
+    }()
+
     static let system: JSONValue = {
         var fields = Dictionary(uniqueKeysWithValues: ["physical_memory_bytes", "page_size", "memory_used_bytes", "wired_bytes",
                                                        "compressed_bytes", "active_bytes", "inactive_bytes", "free_bytes"].map { ($0, integer(0)) })
@@ -54,12 +64,13 @@ enum Schema {
         fields["memory_pressure_percent"] = metric
         fields["swap_used_bytes"] = metric
         fields["swap_total_bytes"] = metric
-        return object(fields, required: fields.keys.sorted())
+        fields["battery"] = nullable(battery)
+        return object(fields, required: fields.keys.filter { $0 != "battery" }.sorted())
     }()
 
     private static let processFields: [String: JSONValue] = {
         var fields = Dictionary(uniqueKeysWithValues: ["cpu_percent", "footprint_bytes", "rss_bytes", "disk_read_bytes",
-                                                       "disk_written_bytes", "disk_read_bps", "disk_write_bps"].map { ($0, metric) })
+                                                       "disk_written_bytes", "disk_read_bps", "disk_write_bps", "power_mw"].map { ($0, metric) })
         fields.merge(["process_key": string(), "pid": integer(0), "ppid": nullable(integer(0)), "name": text,
                       "uid": integer(0), "user": text, "is_own": boolean, "status": strings(ProcessStatus.allCases.map(\.rawValue)),
                       "cpu_time_ns": nullable(string()), "start_time": date, "path": nullable(text)]) { _, value in value }
@@ -102,7 +113,8 @@ enum Schema {
         "series": string(),
         "points": array(object(["t": date, "cpu_percent": metric, "footprint_bytes": metric, "disk_read_bps": metric,
                                 "disk_write_bps": metric, "memory_used_bytes": metric, "memory_pressure_percent": metric,
-                                "memory_pressure": strings(MemoryPressure.allCases.map(\.rawValue))], required: ["t", "cpu_percent"])),
+                                "memory_pressure": strings(MemoryPressure.allCases.map(\.rawValue)),
+                                "system_power_mw": metric, "battery_percent": metric, "power_mw": metric], required: ["t", "cpu_percent"])),
         "gaps": array(object(["from": date, "to": date], required: ["from", "to"])),
     ], required: ["series", "points", "gaps"])
     static let policy = object(["revision": integer(0), "gui_interval_ms": interval, "menu_bar_interval_ms": interval,

@@ -40,12 +40,13 @@ public struct SystemMetrics: Sendable, Codable, Equatable {
     public var memoryPressurePercent: Metric
     public var swapUsedBytes: Metric
     public var swapTotalBytes: Metric
+    public var battery: BatteryMetrics?
 
     public init(cpuPercent: Metric, physicalMemoryBytes: UInt64, pageSize: UInt64, memoryUsedBytes: UInt64,
                 wiredBytes: UInt64, compressedBytes: UInt64, activeBytes: UInt64, inactiveBytes: UInt64, freeBytes: UInt64,
                 memoryPressure: MemoryPressureMetric = .unsupported, memoryPressurePercent: Metric = .unsupported,
                 swapUsedBytes: Metric = .unsupported,
-                swapTotalBytes: Metric = .unsupported)
+                swapTotalBytes: Metric = .unsupported, battery: BatteryMetrics? = nil)
     {
         self.cpuPercent = cpuPercent
         self.physicalMemoryBytes = physicalMemoryBytes
@@ -60,6 +61,7 @@ public struct SystemMetrics: Sendable, Codable, Equatable {
         self.memoryPressurePercent = memoryPressurePercent
         self.swapUsedBytes = swapUsedBytes
         self.swapTotalBytes = swapTotalBytes
+        self.battery = battery
     }
 
     /// A 1.0.0 agent can outlive an upgrade by its idle grace period; its snapshots lack the memory-pressure fields.
@@ -78,7 +80,8 @@ public struct SystemMetrics: Sendable, Codable, Equatable {
             memoryPressure: values.decodeIfPresent(MemoryPressureMetric.self, forKey: .memoryPressure) ?? .unsupported,
             memoryPressurePercent: values.decodeIfPresent(Metric.self, forKey: .memoryPressurePercent) ?? .unsupported,
             swapUsedBytes: values.decodeIfPresent(Metric.self, forKey: .swapUsedBytes) ?? .unsupported,
-            swapTotalBytes: values.decodeIfPresent(Metric.self, forKey: .swapTotalBytes) ?? .unsupported
+            swapTotalBytes: values.decodeIfPresent(Metric.self, forKey: .swapTotalBytes) ?? .unsupported,
+            battery: values.decodeIfPresent(BatteryMetrics.self, forKey: .battery)
         )
     }
 }
@@ -100,6 +103,7 @@ public struct ProcessSample: Sendable, Codable, Equatable {
     public var diskWrittenBytes: Metric
     public var diskReadBps: Metric
     public var diskWriteBps: Metric
+    public var powerMW: Metric
     public var startTime: Date
     public var path: String?
     public var commandLine: ProcessCommandLine?
@@ -113,7 +117,8 @@ public struct ProcessSample: Sendable, Codable, Equatable {
                 rssBytes: Metric, diskReadBytes: Metric, diskWrittenBytes: Metric, diskReadBps: Metric,
                 diskWriteBps: Metric, startTime: Date, path: String? = nil,
                 commandLine: ProcessCommandLine? = nil, cwd: WorkingDirectory? = nil,
-                ancestors: [ProcessAncestor]? = nil, ancestorsIncomplete: Bool? = nil, childrenCount: Int? = nil)
+                ancestors: [ProcessAncestor]? = nil, ancestorsIncomplete: Bool? = nil, childrenCount: Int? = nil,
+                powerMW: Metric = .unsupported)
     {
         self.processKey = processKey
         self.pid = pid
@@ -131,6 +136,7 @@ public struct ProcessSample: Sendable, Codable, Equatable {
         self.diskWrittenBytes = diskWrittenBytes
         self.diskReadBps = diskReadBps
         self.diskWriteBps = diskWriteBps
+        self.powerMW = powerMW
         self.startTime = startTime
         self.path = path
         self.commandLine = commandLine
@@ -143,6 +149,7 @@ public struct ProcessSample: Sendable, Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case processKey, pid, ppid, name, uid, user, isOwn, status, cpuPercent
         case cpuTimeNS = "cpuTimeNs"
+        case powerMW = "powerMw"
         case footprintBytes, rssBytes, diskReadBytes, diskWrittenBytes, diskReadBps, diskWriteBps, startTime, path
         case commandLine, cwd, ancestors, ancestorsIncomplete, childrenCount
     }

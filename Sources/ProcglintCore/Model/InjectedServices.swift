@@ -20,10 +20,11 @@ public struct RawRusage: Sendable, Equatable {
     public var diskWrittenBytes: UInt64
     public var startTimeUS: UInt64
     public var executableUUID: UUID?
+    public var energyNJ: UInt64?
 
     public init(cpuTimeNS: UInt64 = 0, footprintBytes: UInt64 = 0, rssBytes: UInt64 = 0,
                 diskReadBytes: UInt64 = 0, diskWrittenBytes: UInt64 = 0, startTimeUS: UInt64,
-                executableUUID: UUID? = nil)
+                executableUUID: UUID? = nil, energyNJ: UInt64? = nil)
     {
         self.cpuTimeNS = cpuTimeNS
         self.footprintBytes = footprintBytes
@@ -32,6 +33,7 @@ public struct RawRusage: Sendable, Equatable {
         self.diskWrittenBytes = diskWrittenBytes
         self.startTimeUS = startTimeUS
         self.executableUUID = executableUUID
+        self.energyNJ = energyNJ
     }
 }
 

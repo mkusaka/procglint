@@ -9,10 +9,14 @@ public struct HistoryPoint: Sendable, Codable, Equatable {
     public var memoryUsedBytes: Metric?
     public var memoryPressurePercent: Metric?
     public var memoryPressure: MemoryPressure?
+    public var systemPowerMW: Metric?
+    public var batteryPercent: Metric?
+    public var powerMW: Metric?
 
     public init(t: Date, cpuPercent: Metric, footprintBytes: Metric? = nil, diskReadBps: Metric? = nil,
                 diskWriteBps: Metric? = nil, memoryUsedBytes: Metric? = nil,
-                memoryPressurePercent: Metric? = nil, memoryPressure: MemoryPressure? = nil)
+                memoryPressurePercent: Metric? = nil, memoryPressure: MemoryPressure? = nil,
+                systemPowerMW: Metric? = nil, batteryPercent: Metric? = nil, powerMW: Metric? = nil)
     {
         self.t = t
         self.cpuPercent = cpuPercent
@@ -22,6 +26,15 @@ public struct HistoryPoint: Sendable, Codable, Equatable {
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryPressurePercent = memoryPressurePercent
         self.memoryPressure = memoryPressure
+        self.systemPowerMW = systemPowerMW
+        self.batteryPercent = batteryPercent
+        self.powerMW = powerMW
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case t, cpuPercent, footprintBytes, diskReadBps, diskWriteBps, memoryUsedBytes, memoryPressurePercent, memoryPressure, batteryPercent
+        case systemPowerMW = "systemPowerMw"
+        case powerMW = "powerMw"
     }
 }
 

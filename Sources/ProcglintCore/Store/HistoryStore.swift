@@ -107,7 +107,9 @@ public struct HistoryStore: Sendable {
         append(HistoryPoint(t: snapshot.sampledAt, cpuPercent: snapshot.system.cpuPercent,
                             memoryUsedBytes: .ok(Double(snapshot.system.memoryUsedBytes)),
                             memoryPressurePercent: snapshot.system.memoryPressurePercent,
-                            memoryPressure: snapshot.system.memoryPressure.value), to: "system", tick: tick)
+                            memoryPressure: snapshot.system.memoryPressure.value,
+                            systemPowerMW: snapshot.system.battery?.systemPowerMW,
+                            batteryPercent: snapshot.system.battery?.percent), to: "system", tick: tick)
         let samples = Dictionary(snapshot.processes.map { ($0.processKey, $0) }, uniquingKeysWith: { _, latest in latest })
         for key in trackedKeys {
             let name = key.rawValue
@@ -117,7 +119,8 @@ public struct HistoryStore: Sendable {
                 continue
             }
             append(HistoryPoint(t: snapshot.sampledAt, cpuPercent: process.cpuPercent, footprintBytes: process.footprintBytes,
-                                diskReadBps: process.diskReadBps, diskWriteBps: process.diskWriteBps), to: name, tick: tick)
+                                diskReadBps: process.diskReadBps, diskWriteBps: process.diskWriteBps,
+                                powerMW: process.powerMW), to: name, tick: tick)
         }
     }
 

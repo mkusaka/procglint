@@ -61,9 +61,9 @@ void pg_census_free(pg_census_buffer *buffer) {
     buffer->capacity = 0;
 }
 
-int pg_rusage(int32_t pid, struct rusage_info_v2 *usage) {
+int pg_rusage(int32_t pid, int flavor, struct rusage_info_v6 *usage) {
     errno = 0;
-    if (proc_pid_rusage(pid, RUSAGE_INFO_V2, (rusage_info_t *)usage) != 0)
+    if (proc_pid_rusage(pid, flavor, (rusage_info_t *)usage) != 0)
         return errno ? errno : EIO;
     return 0;
 }

@@ -8,13 +8,15 @@ func sample(name: String = "worker") throws -> ProcessSample {
     try ProcessSample(processKey: ProcessKey("p1.boot-a.42.1"), pid: 42, name: name, uid: 501, user: "tester", isOwn: true, status: .ok,
                       cpuPercent: .ok(125), cpuTimeNS: 9_007_199_254_740_993, footprintBytes: .ok(1024), rssBytes: .ok(2048),
                       diskReadBytes: .ok(10), diskWrittenBytes: .ok(20), diskReadBps: .warmingUp, diskWriteBps: .permissionDenied,
-                      startTime: testDate)
+                      startTime: testDate, powerMW: .ok(3000))
 }
 
 func makeSnapshot(name: String = "worker") throws -> Snapshot {
     let system = SystemMetrics(cpuPercent: .ok(25), physicalMemoryBytes: 4096, pageSize: 16384, memoryUsedBytes: 1024,
                                wiredBytes: 128, compressedBytes: 128, activeBytes: 768, inactiveBytes: 512, freeBytes: 2560,
-                               memoryPressure: .ok(.warning), memoryPressurePercent: .ok(65), swapUsedBytes: .ok(1024), swapTotalBytes: .ok(2048))
+                               memoryPressure: .ok(.warning), memoryPressurePercent: .ok(65), swapUsedBytes: .ok(1024), swapTotalBytes: .ok(2048),
+                               battery: BatteryMetrics(percent: .ok(69), isCharging: true, externalPower: true,
+                                                       timeRemainingMinutes: .ok(113), systemPowerMW: .ok(33100)))
     return try Snapshot(agentInstanceID: "agent-a", snapshotID: "agent-a-1", sampledAt: testDate, intervalMS: nil, ageMS: 0,
                         status: .warmingUp, coverage: Coverage(enumerated: 1, sampled: 1), system: system, processes: [sample(name: name)])
 }

@@ -82,6 +82,9 @@ import Testing
     low.diskWriteBps = .ok(1)
     high.diskReadBps = .ok(2)
     high.diskWriteBps = .ok(2)
+    low.powerMW = .ok(1000)
+    high.powerMW = .ok(2000)
+    missing.powerMW = .unsupported
     store.insert(storeSnapshot(processes: [missing, high, low]))
     for sort in ProcessSort.allCases {
         let ascending = try store.listProcesses(ProcessQuery(sort: sort, order: .asc), scope: AccessScope())

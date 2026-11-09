@@ -158,6 +158,50 @@ struct CLIHelpersTests {
         #expect(summary.contains("denied=1"))
     }
 
+    @Test func batteryStatusAndPowerColumns() throws {
+        let battery = BatteryMetrics(percent: .ok(69), isCharging: true, externalPower: true,
+                                     timeRemainingMinutes: .ok(113), cycleCount: .ok(5), healthPercent: .ok(100), systemPowerMW: .ok(33100))
+        var snapshot = try fixtureSnapshot()
+        snapshot.system.battery = battery
+        snapshot.processes[0].powerMW = .ok(3000)
+        let summary = try statusSummary(fixtureStatus(), system: snapshot.system)
+        #expect(summary.contains("Battery: 69% charging · 33.1 W system · health 100% · 5 cycles · 1:53 to full"))
+        #expect(processSummary(snapshot.processes[0]).contains("Power: 3.0 W"))
+        let rows = snapshotCSV(snapshot).components(separatedBy: "\r\n")
+        let cells = Dictionary(uniqueKeysWithValues: zip(rows[0].components(separatedBy: ","), rows[1].components(separatedBy: ",")))
+        #expect(cells["power_mw"] == "3000.0")
+        #expect(cells["power_mw_status"] == "ok")
+        let point = HistoryPoint(t: snapshot.sampledAt, cpuPercent: .warmingUp, systemPowerMW: .ok(33100), batteryPercent: .ok(69), powerMW: .unsupported)
+        let historyRows = historyCSV([HistorySeries(series: "system", points: [point])]).components(separatedBy: "\r\n")
+        let history = Dictionary(uniqueKeysWithValues: zip(historyRows[0].components(separatedBy: ","), historyRows[1].components(separatedBy: ",")))
+        #expect(history["system_power_mw"] == "33100.0")
+        #expect(history["battery_percent"] == "69.0")
+        #expect(history["power_mw"] == "")
+        #expect(history["power_mw_status"] == "unsupported")
+        var discharging = battery
+        discharging.isCharging = false
+        discharging.externalPower = false
+        #expect(batterySummary(discharging).contains("69% discharging"))
+        #expect(batterySummary(discharging).contains("1:53 remaining"))
+        discharging.externalPower = true
+        #expect(batterySummary(discharging).contains("on external power"))
+        #expect(batterySummary(BatteryMetrics()).contains("time unavailable (unsupported)"))
+        #expect(batterySummary(nil) == "Battery: unavailable (no battery reported)")
+    }
+
+    @Test func snapshotSortFlagIsValidatedAndForwarded() async throws {
+        #expect(try CLICommand.parse(["export", "snapshot", "--sort", "power", "--csv"]) == .snapshot(format: .csv, all: false, sort: .power))
+        for arguments in [["export", "snapshot", "--sort"], ["export", "snapshot", "--sort", "watts"],
+                          ["export", "snapshot", "--sort", "power", "--sort", "cpu"], ["export", "history", "--sort", "power"]]
+        {
+            #expect(throws: CLIUsageError.self) { try CLICommand.parse(arguments) }
+        }
+        let snapshot = try fixtureSnapshot()
+        let service = ExportMonitor(pages: [ProcessPage(snapshot: snapshot.header, items: snapshot.processes, totalMatched: 1)])
+        _ = try await exportSnapshot(service: service, all: false, sort: .power)
+        #expect(await service.queries.first?.sort == .power)
+    }
+
     @Test func statusIncludesPressureSwapAndExistingDiagnostics() throws {
         let status = try fixtureStatus()
         var system = try fixtureSnapshot().system

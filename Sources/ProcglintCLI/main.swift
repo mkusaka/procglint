@@ -48,8 +48,8 @@ do {
     case let .show(pid, json, _):
         let process = try await showProcess(service: client, pid: pid)
         output = try json ? jsonOutput(process) : processSummary(process)
-    case let .snapshot(format, all):
-        let snapshot = try await exportSnapshot(service: client, all: all)
+    case let .snapshot(format, all, sort):
+        let snapshot = try await exportSnapshot(service: client, all: all, sort: sort)
         output = try format == .json ? jsonOutput(snapshot) : snapshotCSV(snapshot)
     case let .history(format, series):
         let history = try await client.history(HistoryRequest(series: series))

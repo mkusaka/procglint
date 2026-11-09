@@ -18,6 +18,10 @@ public final class DarwinProcessSource: SamplingProcessSource {
     private let readPressure: @Sendable (inout Int32) -> Int32
     private let readSwap: @Sendable (inout xsw_usage) -> Int32
     private let readMemoryLevel: @Sendable (inout Int32) -> Int32
+    private let readRusage: @Sendable (Int32, Int32, inout rusage_info_v6) -> Int32
+    private let readBattery: @Sendable () -> [String: Any]?
+    private let clock: any MonotonicClock
+    private let batteryCache = Mutex(BatteryCache())
 
     public init(readPressure: @escaping @Sendable (inout Int32) -> Int32 = { pg_memory_pressure(&$0) },
                 readSwap: @escaping @Sendable (inout xsw_usage) -> Int32 = { pg_swap_usage(&$0) },
@@ -25,8 +29,14 @@ public final class DarwinProcessSource: SamplingProcessSource {
                     var size = MemoryLayout<Int32>.size
                     guard sysctlbyname("kern.memorystatus_level", &level, &size, nil, 0) == 0 else { return errno }
                     return size == MemoryLayout<Int32>.size ? 0 : EINVAL
-                }) throws
+                },
+                readRusage: @escaping @Sendable (Int32, Int32, inout rusage_info_v6) -> Int32 = { pg_rusage($0, $1, &$2) },
+                readBattery: (@Sendable () -> [String: Any]?)? = nil,
+                clock: any MonotonicClock = SystemMonotonicClock()) throws
     {
+        self.readRusage = readRusage
+        self.readBattery = readBattery ?? { readBatteryProperties() }
+        self.clock = clock
         self.readPressure = readPressure
         self.readSwap = readSwap
         self.readMemoryLevel = readMemoryLevel
@@ -103,8 +113,14 @@ public final class DarwinProcessSource: SamplingProcessSource {
     }
 
     func samplingUsage(pid: Int32, startTimeUS: UInt64) throws -> SamplingUsage {
-        var usage = rusage_info_v2()
-        try Self.checkPOSIX(pg_rusage(pid, &usage))
+        var usage = rusage_info_v6()
+        var error = readRusage(pid, RUSAGE_INFO_V6, &usage)
+        let hasEnergy = error == 0
+        if error == EINVAL || error == ENOTSUP {
+            usage = rusage_info_v6()
+            error = readRusage(pid, RUSAGE_INFO_V2, &usage)
+        }
+        try Self.checkPOSIX(error)
         guard usage.ri_proc_start_abstime != 0 else { throw ProcessSourceError.exited }
         let (ticks, overflow) = usage.ri_user_time.addingReportingOverflow(usage.ri_system_time)
         guard !overflow else { throw ProcessSourceError.unavailable("CPU counter overflow") }
@@ -112,7 +128,8 @@ public final class DarwinProcessSource: SamplingProcessSource {
             cpuTimeNS: nanoseconds(fromMachTicks: ticks),
             footprintBytes: usage.ri_phys_footprint, rssBytes: usage.ri_resident_size,
             diskReadBytes: usage.ri_diskio_bytesread, diskWrittenBytes: usage.ri_diskio_byteswritten,
-            startTimeUS: startTimeUS, executableUUID: UUID(uuid: usage.ri_uuid)
+            startTimeUS: startTimeUS, executableUUID: UUID(uuid: usage.ri_uuid),
+            energyNJ: hasEnergy ? usage.ri_energy_nj : nil
         ), startAbstime: usage.ri_proc_start_abstime)
     }
 
@@ -179,6 +196,10 @@ public final class DarwinProcessSource: SamplingProcessSource {
         return SystemMemorySample(pressure: pressureMetric, pressurePercent: percent,
                                   swapUsed: validSwap ? .ok(Double(swap.xsu_used)) : unavailable,
                                   swapTotal: validSwap ? .ok(Double(swap.xsu_total)) : unavailable)
+    }
+
+    func systemBattery() -> BatteryMetrics? {
+        batteryCache.withLock { $0.read(now: clock.now, properties: readBattery) }
     }
 
     public func bootSessionID() -> String {

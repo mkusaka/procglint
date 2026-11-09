@@ -203,6 +203,7 @@ public struct SnapshotStore: Sendable {
     private func metric(_ process: ProcessSample, sort: ProcessSort) -> Metric {
         switch sort {
         case .cpu: process.cpuPercent
+        case .power: process.powerMW
         case .footprint: process.footprintBytes
         case .rss: process.rssBytes
         case .diskReadBps: process.diskReadBps

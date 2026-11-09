@@ -12,19 +12,20 @@ enum CLICommand: Equatable {
     case status(json: Bool)
     case doctor
     case show(pid: Int32, json: Bool, includeCommandLines: Bool)
-    case snapshot(format: ExportFormat, all: Bool)
+    case snapshot(format: ExportFormat, all: Bool, sort: ProcessSort = .cpu)
     case history(format: ExportFormat, series: [String])
 
     static let usage = """
     Usage: procglint status [--json]
            procglint doctor
            procglint show <pid> [--json] [--include-command-lines]
-           procglint export snapshot [--json|--csv] [--all]
+           procglint export snapshot [--json|--csv] [--all] [--sort <key>]
            procglint export history [--series system|<process_key> ...] [--json|--csv]
            procglint --help
            procglint --version
     Exports default to JSON. Snapshot defaults to the top 50 own processes by CPU;
     --all exports every permitted process, paging within one snapshot.
+    Sort keys: cpu, power, footprint, rss, disk_read_bps, disk_write_bps, cpu_time, pid, name.
     History defaults to system. Missing CSV metrics are empty, not zero.
     """
 
@@ -64,6 +65,7 @@ enum CLICommand: Equatable {
         var format = ExportFormat.json
         var hasFormat = false
         var all = false
+        var sort: ProcessSort?
         var series: [String]?
         var index = 2
         while index < arguments.count {
@@ -75,6 +77,12 @@ enum CLICommand: Equatable {
                 format = argument == "--json" ? .json : .csv
             case "--all" where snapshot && !all:
                 all = true
+            case "--sort" where snapshot && sort == nil:
+                index += 1
+                guard index < arguments.count, let key = ProcessSort(rawValue: arguments[index]) else {
+                    throw CLIUsageError(message: "--sort needs a valid process sort key")
+                }
+                sort = key
             case "--series" where !snapshot && series == nil:
                 index += 1
                 var selectors: [String] = []
@@ -91,7 +99,7 @@ enum CLICommand: Equatable {
             }
             index += 1
         }
-        return snapshot ? .snapshot(format: format, all: all) : .history(format: format, series: series ?? ["system"])
+        return snapshot ? .snapshot(format: format, all: all, sort: sort ?? .cpu) : .history(format: format, series: series ?? ["system"])
     }
 }
 
@@ -111,7 +119,9 @@ func showProcess(service: any MonitorService, pid: Int32) async throws -> Proces
 }
 
 func processSummary(_ sample: ProcessSample) -> String {
-    var lines = ["\(sample.name) (\(sample.pid))", "Path: \(sample.path ?? "—")", "Launched by (root first):"]
+    let power = sample.powerMW.value.map { String(format: "%.1f W", locale: Locale(identifier: "en_US_POSIX"), $0 / 1000) }
+        ?? "unavailable (\(sample.powerMW.status.rawValue))"
+    var lines = ["\(sample.name) (\(sample.pid))", "Power: \(power)", "Path: \(sample.path ?? "—")", "Launched by (root first):"]
     for (index, ancestor) in (sample.ancestors ?? []).reversed().enumerated() {
         lines.append(String(repeating: "  ", count: index + 1) + "\(ancestor.name) (\(ancestor.pid))")
         if let command = ancestor.commandLine {
@@ -135,8 +145,8 @@ struct CLIUsageError: Error {
     let message: String
 }
 
-func exportSnapshot(service: any MonitorService, all: Bool) async throws -> Snapshot {
-    var query = try ProcessQuery(filter: all ? .all : .mine, limit: all ? 200 : 50)
+func exportSnapshot(service: any MonitorService, all: Bool, sort: ProcessSort = .cpu) async throws -> Snapshot {
+    var query = try ProcessQuery(filter: all ? .all : .mine, sort: sort, limit: all ? 200 : 50)
     let first = try await service.listProcesses(query)
     var items = first.items
     var cursor = first.nextCursor
@@ -185,6 +195,7 @@ func statusSummary(_ status: MonitorStatus, system: SystemMetrics? = nil) -> Str
     Agent: pid \(status.agentPID), instance \(status.agentInstanceID)
     Overhead: CPU \(cpu), footprint \(status.agentFootprintBytes) bytes
     \(memorySummary(system))
+    \(batterySummary(system?.battery))
     Sampling: \(status.samplingActive ? "active" : "idle"), effective interval \(interval)
     Collections: \(status.collectionsTotal), last \(status.lastCollectionMS) ms, p95 \(status.collectionP95MS) ms
     Coverage: \(coverage.sampled)/\(coverage.enumerated) sampled, \(coverage.permissionDenied) denied, \(coverage.exitedDuringSample) exited
@@ -193,6 +204,33 @@ func statusSummary(_ status: MonitorStatus, system: SystemMetrics? = nil) -> Str
     History: \(status.historyBytes) bytes
     Policy: revision \(status.policy.revision), GUI \(status.policy.guiIntervalMS.milliseconds) ms, menu bar \(status.policy.menuBarIntervalMS.milliseconds) ms, history \(status.policy.historyMinutes) min, max process series \(status.policy.maxProcessSeries)
     """ + "\n"
+}
+
+func batterySummary(_ battery: BatteryMetrics?) -> String {
+    guard let battery else { return "Battery: unavailable (no battery reported)" }
+    func formatted(_ metric: Metric, _ format: String, scale: Double = 1) -> String {
+        guard let value = metric.value else { return "unavailable (\(metric.status.rawValue))" }
+        return String(format: format, locale: Locale(identifier: "en_US_POSIX"), value * scale)
+    }
+    let state = if battery.isCharging == true {
+        " charging"
+    } else if battery.externalPower == true {
+        " on external power"
+    } else if battery.externalPower == false {
+        " discharging"
+    } else {
+        ""
+    }
+    var parts = ["Battery: " + formatted(battery.percent, "%.0f%%") + state,
+                 formatted(battery.systemPowerMW, "%.1f W system", scale: 0.001),
+                 "health " + formatted(battery.healthPercent, "%.0f%%"), formatted(battery.cycleCount, "%.0f cycles")]
+    if let minutes = battery.timeRemainingMinutes.value, minutes >= 0, minutes < 65535 {
+        let duration = String(format: "%d:%02d", Int(minutes) / 60, Int(minutes) % 60)
+        parts.append(duration + (battery.isCharging == true ? " to full" : " remaining"))
+    } else {
+        parts.append("time unavailable (\(battery.timeRemainingMinutes.status.rawValue))")
+    }
+    return parts.joined(separator: " · ")
 }
 
 private func memorySummary(_ system: SystemMetrics?) -> String {
@@ -300,7 +338,7 @@ func snapshotCSV(_ snapshot: Snapshot) -> String {
                                                                  "compressed_bytes", "active_bytes", "inactive_bytes", "free_bytes"]
         + ["memory_pressure", "memory_pressure_status"] + metricHeaders(["swap_used_bytes", "swap_total_bytes"])
     let processHeaders = ["process_key", "pid", "ppid", "name", "uid", "user", "is_own", "process_status", "cpu_time_ns", "start_time", "path"]
-    let metrics = ["cpu_percent", "footprint_bytes", "rss_bytes", "disk_read_bytes", "disk_written_bytes", "disk_read_bps", "disk_write_bps"]
+    let metrics = ["cpu_percent", "footprint_bytes", "rss_bytes", "disk_read_bytes", "disk_written_bytes", "disk_read_bps", "disk_write_bps", "power_mw"]
     let common = [snapshot.agentInstanceID, snapshot.snapshotID, dateCell(snapshot.sampledAt), snapshot.intervalMS.map(String.init) ?? "",
                   String(snapshot.ageMS), snapshot.status.rawValue, String(coverage.enumerated), String(coverage.sampled),
                   String(coverage.permissionDenied), String(coverage.exitedDuringSample)]
@@ -314,7 +352,7 @@ func snapshotCSV(_ snapshot: Snapshot) -> String {
                         String(process.uid), process.user, String(process.isOwn), process.status.rawValue,
                         process.cpuTimeNS.map(String.init) ?? "", dateCell(process.startTime), process.path ?? ""]
         let processMetrics: [Metric?] = [process.cpuPercent, process.footprintBytes, process.rssBytes, process.diskReadBytes,
-                                         process.diskWrittenBytes, process.diskReadBps, process.diskWriteBps]
+                                         process.diskWrittenBytes, process.diskReadBps, process.diskWriteBps, process.powerMW]
         let values: [String] = processMetrics.flatMap { metricCells($0) }
         output += csvRow(prefix + identity + values)
     }
@@ -325,11 +363,12 @@ func snapshotCSV(_ snapshot: Snapshot) -> String {
 }
 
 func historyCSV(_ history: [HistorySeries]) -> String {
-    let names = ["cpu_percent", "footprint_bytes", "disk_read_bps", "disk_write_bps", "memory_used_bytes"]
+    let names = ["cpu_percent", "footprint_bytes", "disk_read_bps", "disk_write_bps", "memory_used_bytes", "system_power_mw", "battery_percent", "power_mw"]
     var output = csvRow(["series", "record_type", "t"] + metricHeaders(names) + ["gap_from", "gap_to"])
     for series in history {
         for point in series.points {
-            let pointMetrics: [Metric?] = [point.cpuPercent, point.footprintBytes, point.diskReadBps, point.diskWriteBps, point.memoryUsedBytes]
+            let pointMetrics: [Metric?] = [point.cpuPercent, point.footprintBytes, point.diskReadBps, point.diskWriteBps, point.memoryUsedBytes,
+                                           point.systemPowerMW, point.batteryPercent, point.powerMW]
             let values: [String] = pointMetrics.flatMap { metricCells($0) }
             output += csvRow([series.series, "point", dateCell(point.t)] + values + ["", ""])
         }

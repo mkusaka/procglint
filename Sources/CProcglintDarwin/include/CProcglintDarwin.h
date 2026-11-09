@@ -9,7 +9,7 @@
 
 // POSIX wrappers return an errno value (zero on success); Mach wrappers return kern_return_t.
 int pg_list_pids(int32_t *buffer, int capacity, int *count);
-int pg_rusage(int32_t pid, struct rusage_info_v2 *usage);
+int pg_rusage(int32_t pid, int flavor, struct rusage_info_v6 *usage);
 
 typedef struct {
     char name[64];

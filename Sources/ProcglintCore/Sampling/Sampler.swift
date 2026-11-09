@@ -112,7 +112,8 @@ public actor Sampler {
                     diskWrittenBytes: usage.map { .ok(Double($0.diskWrittenBytes)) } ?? missing,
                     diskReadBps: usage.map { rate($0.diskReadBytes, previous: old?.usage.diskReadBytes, elapsed: elapsed, scale: 1_000_000_000) } ?? missing,
                     diskWriteBps: usage.map { rate($0.diskWrittenBytes, previous: old?.usage.diskWrittenBytes, elapsed: elapsed, scale: 1_000_000_000) } ?? missing,
-                    startTime: Date(timeIntervalSince1970: Double(bsd.startTimeUS) / 1_000_000)
+                    startTime: Date(timeIntervalSince1970: Double(bsd.startTimeUS) / 1_000_000),
+                    powerMW: usage.map { processPower($0.energyNJ, previous: old?.usage.energyNJ, elapsed: elapsed) } ?? missing
                 ))
                 if let usage {
                     coverage.sampled += 1
@@ -135,7 +136,8 @@ public actor Sampler {
             wiredBytes: vm.wiredPages * page, compressedBytes: vm.compressorPages * page,
             activeBytes: vm.activePages * page, inactiveBytes: vm.inactivePages * page, freeBytes: vm.freePages * page,
             memoryPressure: memory.pressure, memoryPressurePercent: memory.pressurePercent,
-            swapUsedBytes: memory.swapUsed, swapTotalBytes: memory.swapTotal
+            swapUsedBytes: memory.swapUsed, swapTotalBytes: memory.swapTotal,
+            battery: (source as? any SamplingProcessSource)?.systemBattery()
         )
         // A failed census is not an empty successful sweep: keep baselines and live identities.
         var status: SnapshotStatus = .unavailable
