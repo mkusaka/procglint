@@ -195,8 +195,8 @@ final class HistoryChartView: NSView {
     }
 
     func cursorChanged() {
-        // Keep AXValue as the latest sample; AXHelp exposes the transient, synchronised read-out.
-        setAccessibilityHelp(hoverReadout.map { "Cursor: " + $0 })
+        // Keep AXValue as the latest sample; AXTitle exposes the transient, synchronised read-out.
+        setAccessibilityTitle(hoverReadout.map { "Cursor: " + $0 })
         needsDisplay = true
     }
 

@@ -94,7 +94,7 @@ private func date(_ seconds: Double) -> Date {
     #expect(controller.ioChart.hoverReadout == "Read: 20 B/s, Write: 40 B/s")
     for chart in charts {
         #expect(chart.hoverReadout != nil)
-        #expect(chart.accessibilityHelp()?.hasPrefix("Cursor: ") == true)
+        #expect(chart.accessibilityTitle()?.hasPrefix("Cursor: ") == true)
     }
     #expect(controller.systemCPUChart.accessibilityValue() as? String == "40.0%")
     #expect(controller.systemMemoryChart.accessibilityValue() as? String == "40.0 KiB")
@@ -106,6 +106,6 @@ private func date(_ seconds: Double) -> Date {
     controller.ioChart.mouseExited(with: NSEvent())
     for chart in charts {
         #expect(chart.hoverReadout == nil)
-        #expect(chart.accessibilityHelp() == nil)
+        #expect(chart.accessibilityTitle() == nil)
     }
 }
