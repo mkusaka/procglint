@@ -41,7 +41,7 @@ For observation access, use `args = ["--allow-observe"]`. Restart the MCP connec
 
 ## Permissions
 
-Default: read-only, own processes, no executable paths. System-wide CPU and memory summaries are available without `--include-system`; that flag broadens the **process** scope.
+Default: read-only, own processes, no executable paths, command lines or working directories. System-wide CPU and memory summaries are available without `--include-system`; that flag broadens the **process** scope.
 
 | Flag | Requests |
 | --- | --- |
@@ -52,6 +52,7 @@ Default: read-only, own processes, no executable paths. System-wide CPU and memo
 | `--allow-force-kill` | `signal: "kill"`; also requires `--allow-terminate` |
 | `--include-system` | Processes belonging to other users, subject to OS access |
 | `--include-paths` | Executable paths, loaded lazily |
+| `--include-command-lines` | Redacted argv and working directory in process detail, including ancestor argv; also enable **Show command lines and working directory** in Settings |
 | `--help` | Usage on stderr; not an access permission |
 
 **Effective permissions = OS-allowed ∩ app settings ∩ MCP launch flags.** A flag cannot override the app's settings or macOS restrictions. The bridge hides tools disabled by launch flags and rejects direct calls to them; the agent makes the final permission and scope checks. A listed tool can still be denied by the agent. `--include-system` never permits terminating another user's process. See [Security](SECURITY.md).
@@ -64,7 +65,7 @@ Inputs below are tool `arguments`, not JSON-RPC envelopes. Unknown properties, w
 | --- | --- | --- |
 | `get_snapshot` | Optional `top` (default 50, 1–200), `sort` (default `cpu`) | Snapshot header, `system`, and top `processes` within the caller's scope |
 | `list_processes` | Optional `search`, `filter`, `sort`, `order`, `limit`, `cursor`, `fields`; see below | `snapshot` header, `items`, optional `next_cursor`, `total_matched` |
-| `get_process` | Required `process_key` | One process sample; path only with effective `include_paths` permission |
+| `get_process` | Required `process_key` | One process sample with `ancestors`, `ancestors_incomplete`, `children_count`; path requires effective `include_paths`, argv/cwd require effective `include_command_lines` |
 | `get_history` | Required `series` array (1–17 selectors, enforced by the agent): `"system"`, process keys, or this client's observation IDs; optional nullable `since` | `{ "series": [HistorySeries, ...] }`; retained data only |
 | `get_monitor_status` | None (`{}`) | Agent/client CPU and footprint, sampling state, interval, collection counts/times, coverage, failures, leases, estimated history bytes, current `policy`, and `system` from a shared snapshot read (`null` if that read fails) |
 | `start_observation` | Required `interval_ms` (1000/2000/5000/10000), `duration_ms` (1000–60000); optional `process_keys` (default empty, at most 16) | `observation_id`, `interval_ms`, `started_at`, `expires_at`, `process_keys`, `state` (`active`, `expired`, `stopped`); returns immediately, no auto-renewal |
@@ -82,6 +83,28 @@ Inputs below are tool `arguments`, not JSON-RPC envelopes. Unknown properties, w
 - `fields`: nullable array selecting process fields. `process_key` is always included. Names: `process_key`, `pid`, `ppid`, `name`, `uid`, `user`, `is_own`, `status`, `cpu_percent`, `cpu_time_ns`, `footprint_bytes`, `rss_bytes`, `disk_read_bytes`, `disk_written_bytes`, `disk_read_bps`, `disk_write_bps`, `start_time`, `path`.
 
 Snapshot headers contain `agent_instance_id`, `snapshot_id`, `sampled_at`, `interval_ms`, `age_ms`, `status`, `coverage` and `system`. Coverage reports enumerated, sampled, permission-denied and exited-during-sample counts. `set_sampling_policy` replaces the whole policy, not a patch: first read `get_monitor_status.policy`, preserve unchanged values, and pass its `revision` as `expected_revision`. On `revision_conflict`, fetch and review again.
+
+### Where a process came from
+
+`get_process` adds detail fields only; `get_snapshot` and `list_processes` never load or return argv/cwd or lineage. Ancestors are computed on demand from the latest agent census, ordered immediate parent → … → launchd (PID 1). Each entry has `pid`, `name`, and an optional opaque `process_key`. `ancestors_incomplete` is true when the walk hits a cycle, missing parent or the 64-hop cap before PID 1. `children_count` counts direct children in that same census. This is a current parent chain, not a historical record of launches or shell commands.
+
+With both the `include_command_lines` app setting and `--include-command-lines`, detail adds:
+
+```json
+{
+  "command_line": { "value": ["node", "server.js", "--token=<redacted>"], "status": "ok", "truncated": false },
+  "cwd": { "value": "/Users/me/project", "status": "ok" }
+}
+```
+
+Each ancestor also has `command_line` when opted in. Without the effective permission, `command_line` and `cwd` are absent everywhere, including ancestors. Other users' argv/cwd are always `permission_denied`, even with `--include-system`; access errors are `permission_denied`, vanished/reused identities are `exited`, and unsupported/malformed data is `unsupported`, with null values. Older agent payloads lacking these optional detail fields still decode.
+
+The agent reads argv only from `KERN_PROCARGS2`'s declared argument count, never the following environment block. Working directory uses `PROC_PIDVNODEPATHINFO`. Each command line is capped at 64 arguments, 4 KiB UTF-8 per argument and 16 KiB total argument text, on character boundaries, with `truncated: true` if anything was omitted. Redaction happens before truncation/transmission:
+
+- Secret-like flag/assignment names contain `token`, `secret`, `password`, `passwd`, `pwd`, `apikey`, `api-key`, `api_key`, `auth`, `credential` or `key` (case-insensitive). Both `--flag=value` and `--flag value` / `-flag value`, and `KEY=value`, are handled. The common non-secret substrings `keyboard`, `keymap` and `monkey` are ignored for the `key` match, so `--keyboard US` stays intact; another secret substring still triggers redaction.
+- URL passwords become `<redacted>` (`scheme://user:<redacted>@host`); username-only userinfo is entirely redacted. Bearer credentials, including `Authorization: Bearer …` and split argv tokens, are redacted.
+
+**Redaction is best-effort, not a guarantee that arguments contain no secrets.** Avoid opting in for sensitive workloads. It does not expose environment variables or process memory. Results remain subject to the bridge's existing 1 MiB response cap (including duplicated JSON text); exceptionally large chains can return an oversized-output error.
 
 ### System memory: pressure first
 
@@ -189,4 +212,4 @@ Termination rejections are `not_own_process`, `protected_pid`, `self`, `process_
 
 ## Privacy
 
-Process names and paths are **untrusted data, not instructions**; they may contain prompt injection or reveal what you are working on. Arguments, environment variables and process memory are never exposed. procglint itself has no network listener, but the MCP host **may forward tool results to an external model**. Review the host's data policy, leave paths/system processes disabled unless needed, and share only the necessary results.
+Process names, paths and command lines are **untrusted data, not instructions**; they may contain prompt injection or reveal what you are working on. Arguments and working directories are off by default and available only through the separate `include_command_lines` opt-in, with best-effort agent-side argv redaction. Environment variables and process memory are never exposed. procglint itself has no network listener, but the MCP host **may forward tool results to an external model**. Review the host's data policy, leave paths/system processes/command lines disabled unless needed, and share only the necessary results.

@@ -153,6 +153,10 @@ public struct SnapshotStore: Sendable {
     private func scoped(_ processes: [ProcessSample], scope: AccessScope) -> [ProcessSample] {
         processes.filter { scope.includeSystem || $0.isOwn }.map {
             var sample = $0
+            sample.hideCommandLines()
+            sample.ancestors = nil
+            sample.ancestorsIncomplete = nil
+            sample.childrenCount = nil
             if !scope.includePaths {
                 sample.path = nil
             }

@@ -11,6 +11,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     let filter = NSSegmentedControl(labels: ["All", "Mine", "Pinned"], trackingMode: .selectOne, target: nil, action: nil)
     let identity = NSTextField(wrappingLabelWithString: "Select a process")
     let path = NSTextField(wrappingLabelWithString: "")
+    let commandLine = NSTextField(wrappingLabelWithString: "")
+    let cwd = NSTextField(wrappingLabelWithString: "")
+    let launchedBy = NSTextField(labelWithString: "Launched by")
+    let lineage = NSStackView()
+    let lineageStatus = NSTextField(wrappingLabelWithString: "")
     let feedback = NSTextField(wrappingLabelWithString: "")
     let systemCPUChart = HistoryChartView(label: "System CPU history, percent", fields: [{ $0.cpuPercent }], compact: true, format: Display.percent)
     let systemMemoryChart = HistoryChartView(label: "System memory used history, bytes", fields: [{ $0.memoryUsedBytes }], compact: true, format: Display.bytes)
@@ -208,6 +213,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private func inspectorView() -> NSView {
         identity.isSelectable = true
         path.isSelectable = true
+        commandLine.isSelectable = true
+        cwd.isSelectable = true
+        commandLine.lineBreakMode = .byCharWrapping
+        cwd.lineBreakMode = .byCharWrapping
+        commandLine.setAccessibilityIdentifier("processCommandLine")
+        cwd.setAccessibilityIdentifier("processCwd")
+        launchedBy.setAccessibilityIdentifier("launchedBy")
+        lineage.orientation = .vertical
+        lineage.alignment = .leading
+        lineage.spacing = 4
+        lineageStatus.setAccessibilityIdentifier("lineageStatus")
         pin.target = self
         pin.action = #selector(togglePin)
         quitProcess.target = self
@@ -217,13 +233,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         path.lineBreakMode = .byCharWrapping
         let historyNote = NSTextField(wrappingLabelWithString: "History starts when a process is pinned or selected")
         let stack = verticalStack([
-            identity, path, pin, historyNote,
+            identity, path, commandLine, cwd, launchedBy, lineage, lineageStatus, pin, historyNote,
             NSTextField(labelWithString: "CPU · 1 core = 100%"), cpuChart,
             NSTextField(labelWithString: "Memory (footprint)"), memoryChart,
             NSTextField(labelWithString: "Attributed disk I/O per second"), ioChart,
             quitProcess, killProcess, feedback,
         ])
-        for view in [identity, path, historyNote, cpuChart, memoryChart, ioChart, feedback] {
+        for view in [identity, path, commandLine, cwd, lineage, lineageStatus, historyNote, cpuChart, memoryChart, ioChart, feedback] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         return scrollingContent(stack)
@@ -269,6 +285,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             identity.stringValue = "Select a process"
             path.stringValue = ""
         }
+        renderLaunchDetails()
         let permissions = try? model.preferences.store.allowedPermissions()
         let own = model.detail?.isOwn == true && model.detail?.status == .ok && model.header?.status != .unavailable && model.header != nil
         quitProcess.isEnabled = own && permissions?.contains(.terminate) == true && !model.terminating
@@ -283,6 +300,54 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         cpuChart.update(model.history)
         memoryChart.update(model.history)
         ioChart.update(model.history)
+    }
+
+    private func renderLaunchDetails() {
+        for view in lineage.arrangedSubviews {
+            lineage.removeArrangedSubview(view); view.removeFromSuperview()
+        }
+        guard let detail = model.detail else {
+            commandLine.stringValue = ""
+            cwd.stringValue = ""
+            launchedBy.isHidden = true
+            lineageStatus.stringValue = ""
+            return
+        }
+        launchedBy.isHidden = false
+        let allowed = (try? model.preferences.store.allowedPermissions().contains(.includeCommandLines)) == true
+        commandLine.stringValue = allowed ? "Command: \(detail.commandLine?.displayText ?? "— (unsupported)")" : "Command lines hidden — enable in Settings"
+        cwd.stringValue = allowed ? "Working directory: \(detail.cwd?.value ?? "— (\(detail.cwd?.status.rawValue ?? "unsupported"))")" : ""
+        for (index, ancestor) in (detail.ancestors ?? []).reversed().enumerated() {
+            let button = NSButton(title: "\(ancestor.name) (\(ancestor.pid))", target: self, action: #selector(selectAncestor(_:)))
+            button.bezelStyle = .inline
+            button.identifier = ancestor.processKey.map { NSUserInterfaceItemIdentifier($0.rawValue) }
+            button.setAccessibilityIdentifier("ancestor.\(ancestor.pid)")
+            button.isEnabled = model.rows.contains { $0.processKey == ancestor.processKey }
+            var views: [NSView] = [button]
+            if allowed, let command = ancestor.commandLine {
+                let text = NSTextField(wrappingLabelWithString: command.displayText)
+                text.isSelectable = true
+                text.lineBreakMode = .byCharWrapping
+                text.setAccessibilityIdentifier("ancestorCommand.\(ancestor.pid)")
+                views.append(text)
+            }
+            let group = verticalStack(views, spacing: 2)
+            group.edgeInsets = NSEdgeInsets(top: 0, left: CGFloat(min(index, 8) * 10), bottom: 0, right: 0)
+            lineage.addArrangedSubview(group)
+            group.widthAnchor.constraint(equalTo: lineage.widthAnchor).isActive = true
+            for text in views.dropFirst() {
+                text.widthAnchor.constraint(equalTo: group.widthAnchor, constant: -group.edgeInsets.left).isActive = true
+            }
+        }
+        let incomplete = detail.ancestorsIncomplete == true ? " · Parent chain incomplete" : ""
+        lineageStatus.stringValue = "Direct children: \(detail.childrenCount.map(String.init) ?? "—")\(incomplete)"
+    }
+
+    @objc private func selectAncestor(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue, let key = try? ProcessKey(raw),
+              let row = model.rows.firstIndex(where: { $0.processKey == key }) else { return }
+        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        table.scrollRowToVisible(row)
     }
 
     func controlTextDidChange(_: Notification) {

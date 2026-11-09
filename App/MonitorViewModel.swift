@@ -320,10 +320,8 @@ final class MonitorViewModel {
         if let selectedKey, !rows.contains(where: { $0.processKey == selectedKey }) {
             select(nil)
         }
-        if let selectedKey {
-            let path = sameSnapshot ? detail?.path : nil
+        if let selectedKey, !sameSnapshot || detail?.processKey != selectedKey {
             detail = rows.first { $0.processKey == selectedKey }
-            detail?.path = path
         }
     }
 
@@ -371,11 +369,16 @@ final class MonitorViewModel {
         do {
             try await reconcileLeases(renew: false)
             guard windowVisible, selectedKey == key, selectionRevision == revision else { return }
-            if try preferences.store.allowedPermissions().contains(.includePaths) {
-                let process = try await service.process(key: key)
-                guard selectedKey == key, selectionRevision == revision else { return }
-                detail = process
+            var process = try await service.process(key: key)
+            guard selectedKey == key, selectionRevision == revision else { return }
+            let permissions = try preferences.store.allowedPermissions()
+            if !permissions.contains(.includeCommandLines) {
+                process.hideCommandLines()
             }
+            if !permissions.contains(.includePaths) {
+                process.path = nil
+            }
+            detail = process
             if query.filter == .pinned {
                 pinned = rows.contains { $0.processKey == key }
             } else {
@@ -402,7 +405,12 @@ final class MonitorViewModel {
         if (try? preferences.store.allowedPermissions().contains(.includePaths)) != true {
             detail?.path = nil
         }
+        if (try? preferences.store.allowedPermissions().contains(.includeCommandLines)) != true {
+            detail?.hideCommandLines()
+        }
+        historySnapshotID = nil
         onChange?()
+        selectionUpdate = Task { await refreshInspector(refreshHistory: false) }
     }
 
     func togglePin() async {

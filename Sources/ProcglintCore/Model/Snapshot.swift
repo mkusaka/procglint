@@ -102,11 +102,18 @@ public struct ProcessSample: Sendable, Codable, Equatable {
     public var diskWriteBps: Metric
     public var startTime: Date
     public var path: String?
+    public var commandLine: ProcessCommandLine?
+    public var cwd: WorkingDirectory?
+    public var ancestors: [ProcessAncestor]?
+    public var ancestorsIncomplete: Bool?
+    public var childrenCount: Int?
 
     public init(processKey: ProcessKey, pid: Int32, ppid: Int32? = nil, name: String, uid: UInt32, user: String,
                 isOwn: Bool, status: ProcessStatus, cpuPercent: Metric, cpuTimeNS: UInt64?, footprintBytes: Metric,
                 rssBytes: Metric, diskReadBytes: Metric, diskWrittenBytes: Metric, diskReadBps: Metric,
-                diskWriteBps: Metric, startTime: Date, path: String? = nil)
+                diskWriteBps: Metric, startTime: Date, path: String? = nil,
+                commandLine: ProcessCommandLine? = nil, cwd: WorkingDirectory? = nil,
+                ancestors: [ProcessAncestor]? = nil, ancestorsIncomplete: Bool? = nil, childrenCount: Int? = nil)
     {
         self.processKey = processKey
         self.pid = pid
@@ -126,12 +133,18 @@ public struct ProcessSample: Sendable, Codable, Equatable {
         self.diskWriteBps = diskWriteBps
         self.startTime = startTime
         self.path = path
+        self.commandLine = commandLine
+        self.cwd = cwd
+        self.ancestors = ancestors
+        self.ancestorsIncomplete = ancestorsIncomplete
+        self.childrenCount = childrenCount
     }
 
     enum CodingKeys: String, CodingKey {
         case processKey, pid, ppid, name, uid, user, isOwn, status, cpuPercent
         case cpuTimeNS = "cpuTimeNs"
         case footprintBytes, rssBytes, diskReadBytes, diskWrittenBytes, diskReadBps, diskWriteBps, startTime, path
+        case commandLine, cwd, ancestors, ancestorsIncomplete, childrenCount
     }
 }
 

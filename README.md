@@ -54,6 +54,10 @@ The default process **Memory** column is unchanged `ri_phys_footprint`, the same
 
 Choose **procglint → About procglint** to see the marketing version and build commit, for example `1.0.0 (abc1234)`. `procglint --version` reports the same bundle metadata without contacting the agent; source builds append `-dirty` for local changes, and missing metadata is shown as `unknown`.
 
+The process inspector's **Launched by** section shows the current parent chain, root first, and direct child count. Click an ancestor to select it if it is in the loaded table. Missing parents, cycles and the 64-hop limit are marked incomplete; this is census ancestry, not historical shell execution tracking. There is no tree mode in the process list.
+
+Command lines and working directories are **off by default**. Enable **Settings… → Show command lines and working directory** to see selectable argv/cwd in the inspector and to permit CLI/MCP opt-in. CLI and MCP additionally require `--include-command-lines`. Arguments can contain secrets: the agent redacts secret-like flag/assignment values, URL userinfo and Bearer tokens before transmission, but this is best-effort. Command lines are capped at 64 arguments, 4 KiB per argument and 16 KiB total; truncation and access failures are explicit. Other users' argv/cwd remain denied. Environment variables and process memory are never exposed. See [MCP detail/redaction rules](docs/MCP.md#where-a-process-came-from).
+
 ## Connect an MCP client
 
 Start read-only:
@@ -74,6 +78,7 @@ The packaged CLI is `/Applications/Procglint.app/Contents/Helpers/procglint`. Us
 | --- | --- |
 | `procglint status [--json]` | Inspect memory pressure/swap and the shared agent's sampling state, overhead and diagnostics; human-readable by default. |
 | `procglint doctor` | Report agent registration/reachability and recovery steps, including Login Items approval. |
+| `procglint show <pid> [--json] [--include-command-lines]` | Lazy detail and parent chain; redacted argv/cwd require both the flag and Settings permission. |
 | `procglint export snapshot [--json\|--csv] [--all]` | Export the top 50 own processes by CPU; `--all` pages through every permitted process in one snapshot. |
 | `procglint export history [--series system\|<process_key> ...] [--json\|--csv]` | Export retained history; defaults to `system`. |
 | `procglint --help` | Show usage; command/subcommand `--help` is also supported. |
@@ -81,6 +86,7 @@ The packaged CLI is `/Applications/Procglint.app/Contents/Helpers/procglint`. Us
 ```sh
 /Applications/Procglint.app/Contents/Helpers/procglint status
 /Applications/Procglint.app/Contents/Helpers/procglint doctor
+/Applications/Procglint.app/Contents/Helpers/procglint show 1234 --include-command-lines
 /Applications/Procglint.app/Contents/Helpers/procglint export snapshot --csv
 /Applications/Procglint.app/Contents/Helpers/procglint export history --series system --json
 ```
@@ -93,7 +99,7 @@ Exports default to JSON. Missing CSV metrics are empty, with separate status col
 
 ```text
 AppKit GUI + menu bar -------------------\
-CLI (status / doctor / export) -----------+-- XPC --> per-user procglint-agent
+CLI (status / doctor / show / export) -----------+-- XPC --> per-user procglint-agent
 MCP host -- stdio --> procglint-mcp ------/          |-- one OS sampler
                                                    |-- snapshot + history
                                                    |-- leases + permissions

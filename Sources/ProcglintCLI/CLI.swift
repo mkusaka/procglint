@@ -11,12 +11,14 @@ enum CLICommand: Equatable {
     case version
     case status(json: Bool)
     case doctor
+    case show(pid: Int32, json: Bool, includeCommandLines: Bool)
     case snapshot(format: ExportFormat, all: Bool)
     case history(format: ExportFormat, series: [String])
 
     static let usage = """
     Usage: procglint status [--json]
            procglint doctor
+           procglint show <pid> [--json] [--include-command-lines]
            procglint export snapshot [--json|--csv] [--all]
            procglint export history [--series system|<process_key> ...] [--json|--csv]
            procglint --help
@@ -30,7 +32,7 @@ enum CLICommand: Equatable {
         if arguments == ["--version"] {
             return .version
         }
-        let helpPrefixes = [[], ["status"], ["doctor"], ["export"], ["export", "snapshot"], ["export", "history"]]
+        let helpPrefixes = [[], ["status"], ["doctor"], ["show"], ["export"], ["export", "snapshot"], ["export", "history"]]
         if arguments.last == "--help", helpPrefixes.contains(Array(arguments.dropLast())) {
             return .help
         }
@@ -42,6 +44,16 @@ enum CLICommand: Equatable {
         }
         if arguments == ["doctor"] {
             return .doctor
+        }
+        if arguments.first == "show" {
+            guard arguments.count >= 2, let pid = Int32(arguments[1]), pid > 0 else {
+                throw CLIUsageError(message: "show needs a positive PID")
+            }
+            let flags = Array(arguments.dropFirst(2))
+            guard Set(flags).count == flags.count, flags.allSatisfy({ ["--json", "--include-command-lines"].contains($0) }) else {
+                throw CLIUsageError(message: "Unexpected or repeated show flag")
+            }
+            return .show(pid: pid, json: flags.contains("--json"), includeCommandLines: flags.contains("--include-command-lines"))
         }
         guard arguments.count >= 2, arguments[0] == "export",
               ["snapshot", "history"].contains(arguments[1])
@@ -81,6 +93,42 @@ enum CLICommand: Equatable {
         }
         return snapshot ? .snapshot(format: format, all: all) : .history(format: format, series: series ?? ["system"])
     }
+}
+
+extension CLICommand {
+    var requestedPermissions: PermissionSet {
+        if case .show(_, _, true) = self {
+            return [.includeCommandLines]
+        }
+        return []
+    }
+}
+
+func showProcess(service: any MonitorService, pid: Int32) async throws -> ProcessSample {
+    let page = try await service.listProcesses(ProcessQuery(search: String(pid), filter: .all, limit: 1))
+    guard let sample = page.items.first(where: { $0.pid == pid }) else { throw AgentError.notFound("Process is not visible or has exited") }
+    return try await service.process(key: sample.processKey)
+}
+
+func processSummary(_ sample: ProcessSample) -> String {
+    var lines = ["\(sample.name) (\(sample.pid))", "Path: \(sample.path ?? "—")", "Launched by (root first):"]
+    for (index, ancestor) in (sample.ancestors ?? []).reversed().enumerated() {
+        lines.append(String(repeating: "  ", count: index + 1) + "\(ancestor.name) (\(ancestor.pid))")
+        if let command = ancestor.commandLine {
+            lines.append(String(repeating: "  ", count: index + 2) + command.displayText)
+        }
+    }
+    if sample.ancestorsIncomplete == true {
+        lines.append("Parent chain incomplete")
+    }
+    lines.append("Direct children: \(sample.childrenCount.map(String.init) ?? "—")")
+    if let command = sample.commandLine {
+        lines.append("Command: \(command.displayText)")
+        lines.append("Working directory: \(sample.cwd?.value ?? "— (\(sample.cwd?.status.rawValue ?? "unsupported"))")")
+    } else {
+        lines.append("Command lines hidden — enable include_command_lines in Settings and pass --include-command-lines")
+    }
+    return lines.joined(separator: "\n") + "\n"
 }
 
 struct CLIUsageError: Error {

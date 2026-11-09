@@ -66,7 +66,22 @@ enum Schema {
         return fields
     }()
 
-    static let process = object(processFields, required: processFields.keys.filter { $0 != "ppid" && $0 != "path" }.sorted())
+    static let commandLine = object(["value": nullable(array(text, maximum: 64)),
+                                     "status": strings(MetricStatus.allCases.map(\.rawValue)), "truncated": boolean],
+                                    required: ["value", "status", "truncated"])
+    static let cwd = object(["value": nullable(text), "status": strings(MetricStatus.allCases.map(\.rawValue))], required: ["value", "status"])
+    static let ancestor = object(["pid": integer(0), "name": text, "process_key": string(), "command_line": commandLine], required: ["pid", "name"])
+    static let process: JSONValue = {
+        var fields = processFields
+        fields["command_line"] = commandLine
+        fields["cwd"] = cwd
+        fields["ancestors"] = array(ancestor, maximum: 64)
+        fields["ancestors_incomplete"] = boolean
+        fields["children_count"] = integer(0)
+        return object(fields, required: processFields.keys.filter { $0 != "ppid" && $0 != "path" }.sorted())
+    }()
+
+    static let bulkProcess = object(processFields, required: processFields.keys.filter { $0 != "ppid" && $0 != "path" }.sorted())
     /// Field projection can omit any process property except its opaque key.
     static let pageItem = object(processFields, required: ["process_key"])
 
@@ -77,7 +92,7 @@ enum Schema {
     static let header = object(headerFields, required: headerFields.keys.sorted())
     static let snapshot: JSONValue = {
         var fields = headerFields
-        fields["processes"] = array(process)
+        fields["processes"] = array(bulkProcess)
         return object(fields, required: fields.keys.sorted())
     }()
 

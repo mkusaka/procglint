@@ -37,6 +37,7 @@ int pg_census_get(const pg_census_buffer *buffer, int index, pg_census_entry *en
 void pg_census_free(pg_census_buffer *buffer);
 
 int pg_path(int32_t pid, char *buffer, uint32_t capacity);
+int pg_cwd(int32_t pid, char *buffer, uint32_t capacity);
 
 typedef struct {
     uint32_t user, system, idle, nice;

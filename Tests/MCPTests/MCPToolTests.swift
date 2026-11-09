@@ -18,7 +18,7 @@ private let happyCalls: [(String, JSONValue)] = [
 ]
 
 struct MCPToolTests {
-    @Test(arguments: 0 ..< 64)
+    @Test(arguments: 0 ..< 128)
     func listingAndLaunchFlagCombinations(mask: Int) async throws {
         let permissions = PermissionSet(Set(Permission.allCases.enumerated().compactMap { index, permission in
             mask & (1 << index) != 0 ? permission : nil
@@ -124,7 +124,9 @@ struct MCPToolTests {
 
     @Test func pageItemSchemaKeepsPropertiesButOnlyRequiresProcessKey() throws {
         let itemSchema = try #require(Schema.page["properties"]?["items"]?["items"])
-        #expect(itemSchema["properties"] == Schema.process["properties"])
+        #expect(itemSchema["properties"] == Schema.bulkProcess["properties"])
+        #expect(itemSchema["properties"]?["command_line"] == nil)
+        #expect(Schema.process["properties"]?["command_line"] != nil)
         #expect(itemSchema["required"] == ["process_key"])
         #expect(throws: AgentError.self) { try Schema.process.validate(["process_key": "p1.boot-a.42.1"], at: "process") }
         let invalidItems: [JSONValue] = [["name": "worker"], ["process_key": "p1.boot-a.42.1", "name": 1],
@@ -226,7 +228,7 @@ struct MCPToolTests {
     }
 
     @Test func launchFlags() throws {
-        let parsed = try MCPFlags.parse(["--allow-observe", "--allow-configure", "--allow-terminate", "--allow-force-kill", "--include-system", "--include-paths", "--help"])
+        let parsed = try MCPFlags.parse(["--allow-observe", "--allow-configure", "--allow-terminate", "--allow-force-kill", "--include-system", "--include-paths", "--include-command-lines", "--help"])
         #expect(parsed.permissions == .all)
         #expect(parsed.help)
         #expect(try MCPFlags.parse([]) == MCPFlags())

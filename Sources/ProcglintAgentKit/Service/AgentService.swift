@@ -186,7 +186,9 @@ public actor AgentService: AgentRequestHandler {
         switch hello.clientKind {
         case .gui: return allowed
         case .mcp: return allowed.intersection(hello.mcpFlags ?? [])
-        case .cli: return allowed.intersection([.includeSystem, .includePaths])
+        case .cli:
+            let requested: PermissionSet = [.includeSystem, .includePaths]
+            return allowed.intersection(requested.union((hello.mcpFlags ?? []).intersection([.includeCommandLines])))
         }
     }
 
@@ -314,8 +316,8 @@ public actor AgentService: AgentRequestHandler {
     }
 
     private func process(key: ProcessKey, scope: AccessScope) async throws -> ProcessSample {
-        let snapshot = try await scheduler.freshSnapshot(scope: scope)
-        guard var sample = snapshot.processes.first(where: { $0.processKey == key && $0.status != .exited }) else {
+        let snapshot = try await scheduler.freshSnapshot(scope: AccessScope(includeSystem: true))
+        guard var sample = snapshot.processes.first(where: { $0.processKey == key && $0.status != .exited && (scope.includeSystem || $0.isOwn) }) else {
             throw AgentError.notFound("Process is not visible or has exited")
         }
         do {
@@ -332,7 +334,64 @@ public actor AgentService: AgentRequestHandler {
                 throw AgentError.permissionDenied("Process is no longer readable")
             }
         }
+        sample.addLineage(from: snapshot.processes)
+        if scope.includeCommandLines {
+            (sample.commandLine, sample.cwd) = launchDetails(for: sample, includeCWD: true)
+            let byPID = Dictionary(snapshot.processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+            sample.ancestors = sample.ancestors?.map { ancestor in
+                var ancestor = ancestor
+                if let parent = byPID[ancestor.pid] {
+                    ancestor.commandLine = launchDetails(for: parent, includeCWD: false).0
+                }
+                return ancestor
+            }
+        }
         return sample
+    }
+
+    private func launchDetails(for sample: ProcessSample, includeCWD: Bool) -> (ProcessCommandLine, WorkingDirectory?) {
+        guard sample.isOwn else {
+            return (ProcessCommandLine(unavailable: .permissionDenied), includeCWD ? WorkingDirectory(unavailable: .permissionDenied) : nil)
+        }
+        guard let launchSource = source as? any ProcessLaunchSource else {
+            return (ProcessCommandLine(unavailable: .unsupported), includeCWD ? WorkingDirectory(unavailable: .unsupported) : nil)
+        }
+        do {
+            let before = try launchIdentity(sample)
+            let command: ProcessCommandLine
+            do { command = try launchSource.commandLine(pid: sample.pid) }
+            catch { command = ProcessCommandLine(unavailable: launchStatus(error)) }
+            let cwd: WorkingDirectory?
+            if includeCWD {
+                do { cwd = try launchSource.workingDirectory(pid: sample.pid) }
+                catch { cwd = WorkingDirectory(unavailable: launchStatus(error)) }
+            } else {
+                cwd = nil
+            }
+            guard try launchIdentity(sample) == before else { throw ProcessSourceError.exited }
+            // All injected sources pass through the same redaction/caps before crossing the agent boundary.
+            let safe = command.value.map { ProcessCommandLine(arguments: $0, truncated: command.truncated) } ?? command
+            return (safe, cwd)
+        } catch {
+            let status = launchStatus(error)
+            return (ProcessCommandLine(unavailable: status), includeCWD ? WorkingDirectory(unavailable: status) : nil)
+        }
+    }
+
+    private func launchIdentity(_ sample: ProcessSample) throws -> RawBSDInfo {
+        guard let info = try source.bsdInfo(pid: sample.pid),
+              info.startTimeUS == sample.processKey.identity.startTimeUS,
+              try source.bootSessionID() == sample.processKey.identity.bootSessionID else { throw ProcessSourceError.exited }
+        guard info.uid == agentUID else { throw ProcessSourceError.permissionDenied }
+        return info
+    }
+
+    private func launchStatus(_ error: any Error) -> MetricStatus {
+        switch error as? ProcessSourceError {
+        case .permissionDenied: .permissionDenied
+        case .exited: .exited
+        default: .unsupported
+        }
     }
 
     private func visibleSamples(_ keys: [ProcessKey], scope: AccessScope, retainedHistory: Bool = false) async throws -> [ProcessSample] {

@@ -89,6 +89,28 @@ private func sample() throws -> ProcessSample {
     #expect(procglintAgentMachServiceName == "io.github.mkusaka.procglint.agent")
 }
 
+@Test func launchDetailEnvelopeAndLegacyPayloadRoundTrip() throws {
+    var process = try sample()
+    try assertRoundTrip(AgentResponse.process(process))
+    #expect(try !json(AgentResponse.process(process)).contains("command_line"))
+    process.commandLine = ProcessCommandLine(arguments: ["worker", "--token=test-secret"])
+    process.cwd = WorkingDirectory(value: "/private/project")
+    process.ancestors = [ProcessAncestor(pid: 1, name: "launchd", commandLine: ProcessCommandLine(unavailable: .permissionDenied))]
+    process.ancestorsIncomplete = false
+    process.childrenCount = 2
+    try assertRoundTrip(AgentResponse.process(process))
+    let text = try json(AgentResponse.process(process))
+    #expect(text.contains("command_line") && text.contains("children_count"))
+    #expect(!text.contains("test-secret"))
+    process.hideCommandLines()
+    let hidden = try json(AgentResponse.process(process))
+    #expect(!hidden.contains("command_line") && !hidden.contains("cwd"))
+    #expect(hidden.contains("ancestors"))
+    let hello = AgentRequest.hello(ClientHello(clientKind: .cli, version: "1", mcpFlags: [.includeCommandLines]))
+    try assertRoundTrip(hello)
+    #expect(try json(hello).contains("include_command_lines"))
+}
+
 @Test func malformedEnvelopesAreRejected() {
     for invalid in [#"{"method":"unknown"}"#, #"{"method":"snapshot","sort":"unknown","top":50}"#,
                     #"{"method":"process","key":"p1.boot.-1.0"}"#, #"{"method":"list_processes","query":{"limit":0}}"#,

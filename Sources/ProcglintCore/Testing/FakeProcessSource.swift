@@ -1,7 +1,7 @@
 import Foundation
 import Synchronization
 
-public final class FakeProcessSource: ProcessSource {
+public final class FakeProcessSource: ProcessLaunchSource {
     public struct Process: Sendable, Equatable {
         public var rusage: RawRusage
         public var bsdInfo: RawBSDInfo
@@ -18,6 +18,11 @@ public final class FakeProcessSource: ProcessSource {
         public var processes: [Int32: Process] = [:]
         public var enumerationError: ProcessSourceError?
         public var processErrors: [Int32: ProcessSourceError] = [:]
+        public var commandLines: [Int32: ProcessCommandLine] = [:]
+        public var workingDirectories: [Int32: WorkingDirectory] = [:]
+        public var launchErrors: [Int32: ProcessSourceError] = [:]
+        public var commandLineReads: [Int32] = []
+        public var cwdReads: [Int32] = []
         public var exitDuringSample: Set<Int32> = []
         public var cpuTicks = RawCPUTicks()
         public var vm = RawVMStatistics()
@@ -51,6 +56,9 @@ public final class FakeProcessSource: ProcessSource {
         storage.withLock { state in
             state.processes.removeValue(forKey: pid)
             state.processErrors.removeValue(forKey: pid)
+            state.commandLines.removeValue(forKey: pid)
+            state.workingDirectories.removeValue(forKey: pid)
+            state.launchErrors.removeValue(forKey: pid)
             state.exitDuringSample.remove(pid)
         }
     }
@@ -96,6 +104,28 @@ public final class FakeProcessSource: ProcessSource {
                 throw error
             }
             return state.processes[pid]?.path
+        }
+    }
+
+    public func commandLine(pid: Int32) throws -> ProcessCommandLine {
+        try storage.withLock { state in
+            state.commandLineReads.append(pid)
+            if let error = state.launchErrors[pid] ?? state.processErrors[pid] {
+                throw error
+            }
+            guard state.processes[pid] != nil else { throw ProcessSourceError.exited }
+            return state.commandLines[pid] ?? ProcessCommandLine(unavailable: .unsupported)
+        }
+    }
+
+    public func workingDirectory(pid: Int32) throws -> WorkingDirectory {
+        try storage.withLock { state in
+            state.cwdReads.append(pid)
+            if let error = state.launchErrors[pid] ?? state.processErrors[pid] {
+                throw error
+            }
+            guard state.processes[pid] != nil else { throw ProcessSourceError.exited }
+            return state.workingDirectories[pid] ?? WorkingDirectory(unavailable: .unsupported)
         }
     }
 

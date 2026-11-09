@@ -32,8 +32,8 @@ final class UITestingFixture: MonitorService {
             let own = index != 19
             let cpu: Metric = denied ? .permissionDenied : (index == 17 ? .warmingUp : .ok(Double(index + 1)))
             return try ProcessSample(
-                processKey: ProcessKey("p1.boot-ui.\(4100 + index).10"), pid: Int32(4100 + index),
-                name: [0: "Alpha Worker", 17: "Warming Worker", 18: "Denied Worker", 19: "Other User Worker"][index] ?? "Worker \(index)",
+                processKey: ProcessKey("p1.boot-ui.\(4100 + index).10"), pid: Int32(4100 + index), ppid: index == 0 ? 4101 : 1,
+                name: [0: "Alpha Worker", 1: "Fixture Terminal", 17: "Warming Worker", 18: "Denied Worker", 19: "Other User Worker"][index] ?? "Worker \(index)",
                 uid: own ? 501 : 502, user: own ? "fixture-user" : "other-user", isOwn: own,
                 status: denied ? .permissionDenied : .ok, cpuPercent: cpu,
                 cpuTimeNS: denied ? nil : UInt64(index + 1) * 1_000_000_000,
@@ -85,7 +85,26 @@ final class UITestingFixture: MonitorService {
     }
 
     func process(key: ProcessKey) async throws -> ProcessSample {
-        guard let row = current.processes.first(where: { $0.processKey == key }) else { throw AgentError.notFound("Fixture process") }
+        guard var row = current.processes.first(where: { $0.processKey == key }) else { throw AgentError.notFound("Fixture process") }
+        var root = row
+        root.pid = 1
+        root.ppid = 0
+        root.name = "launchd"
+        root.processKey = try ProcessKey("p1.boot-ui.1.1")
+        row.addLineage(from: current.processes + [root])
+        let permissions = try UserDefaultsSettingsStore(suiteName: suiteName).allowedPermissions()
+        if permissions.contains(.includeCommandLines) {
+            row.commandLine = row.isOwn ? ProcessCommandLine(arguments: ["node", "server.js", "--token", "ui-secret"]) : ProcessCommandLine(unavailable: .permissionDenied)
+            row.cwd = row.isOwn ? WorkingDirectory(value: "/fixture/project") : WorkingDirectory(unavailable: .permissionDenied)
+            row.ancestors = row.ancestors?.map {
+                var ancestor = $0
+                ancestor.commandLine = ancestor.pid == 1 ? ProcessCommandLine(unavailable: .permissionDenied) : ProcessCommandLine(arguments: [ancestor.name, "--auth=ui-secret"])
+                return ancestor
+            }
+        }
+        if !permissions.contains(.includePaths) {
+            row.path = nil
+        }
         return row
     }
 

@@ -95,7 +95,7 @@ func invalidArgument(_ body: () throws -> some Any) {
     #expect(PermissionSet.all.intersection([]) == [])
     #expect(PermissionSet.all.intersection(os) == os)
     try roundTrip(PermissionSet.all)
-    #expect(try json(PermissionSet.all) == #"["configure","force_kill","include_paths","include_system","observe","terminate"]"#)
+    #expect(try json(PermissionSet.all) == #"["configure","force_kill","include_command_lines","include_paths","include_system","observe","terminate"]"#)
     #expect(AccessScope(permissions: [.includePaths]) == AccessScope(includePaths: true))
     #expect(AccessScope(permissions: [.includeSystem]).includeSystem)
     #expect(throws: DecodingError.self) { try ProcglintJSON.decoder().decode(PermissionSet.self, from: Data(#"["unknown"]"#.utf8)) }

@@ -24,15 +24,17 @@ actor TestMonitor: MonitorService {
     var largeName: String?
     var snapshotFailure: AgentError?
     var unavailableMemory = false
+    var detail: ProcessSample?
     var calls: [(String, JSONValue)] = []
     var blocked = false
     let clock = FakeClock()
     private var enteredWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
-    func configure(failure: AgentError? = nil, largeName: String? = nil, blocked: Bool = false) {
+    func configure(failure: AgentError? = nil, largeName: String? = nil, blocked: Bool = false, detail: ProcessSample? = nil) {
         self.failure = failure
         self.largeName = largeName
         self.blocked = blocked
+        self.detail = detail
     }
 
     func configureMemory(unavailable: Bool = false, snapshotFailure: AgentError? = nil) {
@@ -84,7 +86,7 @@ actor TestMonitor: MonitorService {
     }
 
     func process(key: ProcessKey) async throws -> ProcessSample {
-        try await record("get_process", .encoded(key)); return try sample()
+        try await record("get_process", .encoded(key)); return try detail ?? sample()
     }
 
     func history(_ request: HistoryRequest) async throws -> [HistorySeries] {

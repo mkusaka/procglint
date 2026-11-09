@@ -102,6 +102,17 @@ int pg_path(int32_t pid, char *buffer, uint32_t capacity) {
     return 0;
 }
 
+int pg_cwd(int32_t pid, char *buffer, uint32_t capacity) {
+    struct proc_vnodepathinfo info = {0};
+    errno = 0;
+    int size = proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, sizeof(info));
+    if (size != sizeof(info)) return errno ? errno : EIO;
+    size_t length = strnlen(info.pvi_cdir.vip_path, sizeof(info.pvi_cdir.vip_path));
+    if (length == 0 || length >= sizeof(info.pvi_cdir.vip_path) || length >= capacity) return EINVAL;
+    memcpy(buffer, info.pvi_cdir.vip_path, length + 1);
+    return 0;
+}
+
 kern_return_t pg_host_cpu(pg_cpu_ticks *ticks) {
     host_cpu_load_info_data_t info = {0};
     mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;

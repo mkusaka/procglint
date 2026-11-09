@@ -100,6 +100,22 @@ final class ProcglintUITests: XCTestCase {
         }
     }
 
+    func testInspectorShowsLaunchedByAndRedactedCommandLine() throws {
+        try withApp { app, _ in
+            search("4100", in: app)
+            app.staticTexts["process.4100.name"].click()
+            expectValue(app.staticTexts["launchedBy"], equals: "Launched by")
+            let root = app.buttons["ancestor.1"]
+            XCTAssertTrue(root.waitForExistence(timeout: 5))
+            XCTAssertEqual(root.title, "launchd (1)")
+            XCTAssertEqual(app.buttons["ancestor.4101"].title, "Fixture Terminal (4101)")
+            expectValue(app.staticTexts["processCommandLine"], equals: "Command: node server.js --token <redacted>")
+            expectValue(app.staticTexts["processCwd"], contains: "/fixture/project")
+            expectValue(app.staticTexts["ancestorCommand.4101"], contains: "--auth=<redacted>")
+            XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "value CONTAINS %@", "ui-secret")).firstMatch.exists)
+        }
+    }
+
     func testQuitCancelSendsNothingAndConfirmSendsOnce() throws {
         try withApp { app, audit in
             search("4100", in: app)

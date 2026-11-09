@@ -229,12 +229,12 @@ func preferences() -> AppPreferences {
     await model.setVisibility(window: true, menuBar: false)
     model.select(process.processKey)
     await model.refreshInspector()
-    #expect(service.processCalls.isEmpty)
+    #expect(service.processCalls == [process.processKey])
     #expect(model.detail?.path == nil)
     #expect(service.historyRequests.last?.series == [process.processKey.rawValue])
     try prefs.store.setAllowedPermissions([.includePaths])
     await model.refreshInspector()
-    #expect(service.processCalls == [process.processKey])
+    #expect(service.processCalls == [process.processKey, process.processKey])
     #expect(model.detail?.path?.hasSuffix("worker") == true)
     await model.togglePin()
     #expect(model.pinned)
@@ -259,12 +259,12 @@ func preferences() -> AppPreferences {
 @MainActor
 @Test func mcpConfigurationAllFlagCombinationsKeepActualHelperPath() throws {
     let url = URL(fileURLWithPath: "/Applications/My Apps/Procglint.app/Contents/Helpers/procglint-mcp")
-    let flags = ["--allow-observe", "--allow-configure", "--allow-terminate", "--allow-force-kill", "--include-system", "--include-paths"]
+    let flags = ["--allow-observe", "--allow-configure", "--allow-terminate", "--allow-force-kill", "--include-system", "--include-paths", "--include-command-lines"]
     struct Config: Decodable {
         struct Server: Decodable { var command: String; var args: [String] }
         var mcpServers: [String: Server]
     }
-    for mask in 0 ..< 64 {
+    for mask in 0 ..< 128 {
         let permissions = PermissionSet(Set(Permission.allCases.enumerated().filter { mask & (1 << $0.offset) != 0 }.map(\.element)))
         let json = try MCPConfiguration.json(helperURL: url, permissions: permissions)
         let decoder = ProcglintJSON.decoder()

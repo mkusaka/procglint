@@ -63,6 +63,7 @@ enum MCPConfiguration {
             (.observe, "--allow-observe"), (.configure, "--allow-configure"),
             (.terminate, "--allow-terminate"), (.forceKill, "--allow-force-kill"),
             (.includeSystem, "--include-system"), (.includePaths, "--include-paths"),
+            (.includeCommandLines, "--include-command-lines"),
         ]
         let configuration = Configuration(mcpServers: ["procglint": Server(
             command: helperURL.path, args: flags.filter { permissions.contains($0.0) }.map(\.1)

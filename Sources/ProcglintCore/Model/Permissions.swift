@@ -5,6 +5,7 @@ public enum Permission: String, Sendable, Codable, CaseIterable {
     case forceKill = "force_kill"
     case includeSystem = "include_system"
     case includePaths = "include_paths"
+    case includeCommandLines = "include_command_lines"
 }
 
 public struct PermissionSet: Sendable, Codable, Equatable, SetAlgebra, ExpressibleByArrayLiteral, Sequence {
@@ -83,14 +84,24 @@ public struct PermissionSet: Sendable, Codable, Equatable, SetAlgebra, Expressib
 public struct AccessScope: Sendable, Codable, Hashable {
     public var includeSystem: Bool
     public var includePaths: Bool
+    public var includeCommandLines: Bool
 
-    public init(includeSystem: Bool = false, includePaths: Bool = false) {
+    public init(includeSystem: Bool = false, includePaths: Bool = false, includeCommandLines: Bool = false) {
         self.includeSystem = includeSystem
         self.includePaths = includePaths
+        self.includeCommandLines = includeCommandLines
     }
 
     public init(permissions: PermissionSet) {
-        self.init(includeSystem: permissions.contains(.includeSystem), includePaths: permissions.contains(.includePaths))
+        self.init(includeSystem: permissions.contains(.includeSystem), includePaths: permissions.contains(.includePaths),
+                  includeCommandLines: permissions.contains(.includeCommandLines))
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(includeSystem: values.decode(Bool.self, forKey: .includeSystem),
+                      includePaths: values.decode(Bool.self, forKey: .includePaths),
+                      includeCommandLines: values.decodeIfPresent(Bool.self, forKey: .includeCommandLines) ?? false)
     }
 }
 

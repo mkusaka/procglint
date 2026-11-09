@@ -112,7 +112,14 @@ Every measured value that can be missing is a `Metric`:
 | `start_time` | date |
 | `path` | string? Only when the caller's scope includes paths. Loaded lazily. |
 
-Never exposed: command-line arguments, environment, process memory.
+Never exposed: environment variables or process memory.
+
+Command-line arguments and working directories are exposed only in lazy per-process detail responses when the caller's effective scope includes `include_command_lines` (default off). Bulk snapshot and process-list rows never include command lines, working directories or lineage. Lazy process detail adds:
+- `ancestors`: immediate parent → … → launchd (pid 1), each `pid`, `name`, optional `process_key`, optional `command_line`; `ancestors_incomplete: true` when the census walk stops early (cycle, missing parent, 64 hops).
+- `children_count`: direct children in the latest census.
+- `command_line`: `{value: [string]?, status, truncated}` and `cwd`: `{value: string?, status}`, only with `include_command_lines`.
+
+Ancestors and child counts are not permission-gated and are computed only on detail requests from the current census. Command lines come from `KERN_PROCARGS2` argc/argv only (the environment block is never returned); cwd from `PROC_PIDVNODEPATHINFO`. Other users' processes / access denial → `permission_denied`; vanished or reused identity → `exited`; malformed → `unsupported`; values are non-null iff status is ok. Caps: 64 arguments, 4 KiB UTF-8 per argument, 16 KiB total, on character boundaries (`truncated: true`). Agent-side redaction (before truncation and transmission) replaces secret-like values with `<redacted>`: flag/`KEY=value` values whose name matches (case-insensitive) token|secret|password|passwd|pwd|apikey|api-key|api_key|auth|credential|key (ignoring keyboard, keymap, monkey), separate-value flags, URL userinfo/passwords and Bearer credentials. Redaction is best-effort. Decoders treat absent detail fields as nil.
 
 ## Queries
 
@@ -174,7 +181,7 @@ Policy defaults: GUI window 5000 ms (choices 1/2/5/10 s), menu bar 10000 ms.
 
 ## Permissions
 
-`Permission`: `observe`, `configure`, `terminate`, `force_kill`, `include_system`, `include_paths`.
+`Permission`: `observe`, `configure`, `terminate`, `force_kill`, `include_system`, `include_paths`, `include_command_lines`. MCP command-line access requires both the app setting and `--include-command-lines`; CLI requires the app setting and `procglint show --include-command-lines`; the GUI follows app settings. Nothing overrides OS restrictions.
 
 Effective permissions = OS-allowed ∩ app settings (`SettingsStore`, written by the GUI) ∩ MCP launch flags (`--allow-observe`, `--allow-configure`, `--allow-terminate`, `--allow-force-kill`, `--include-system`, `--include-paths`). The agent computes and enforces the final set; MCP-side filtering is only for tool listing. Default (no flags): read-only, own processes, no paths.
 

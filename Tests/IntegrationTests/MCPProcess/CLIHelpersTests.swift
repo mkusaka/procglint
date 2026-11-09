@@ -48,6 +48,43 @@ struct CLIHelpersTests {
         #expect(throws: CLIUsageError.self) { try CLICommand.parse(arguments) }
     }
 
+    @Test func showParsesOptInAndRendersLazyDetail() async throws {
+        #expect(try CLICommand.parse(["show", "--help"]) == .help)
+        #expect(try CLICommand.parse(["show", "42"]) == .show(pid: 42, json: false, includeCommandLines: false))
+        let command = try CLICommand.parse(["show", "42", "--include-command-lines", "--json"])
+        #expect(command == .show(pid: 42, json: true, includeCommandLines: true))
+        #expect(command.requestedPermissions == [.includeCommandLines])
+        #expect(try CLICommand.parse(["show", "42"]).requestedPermissions.isEmpty)
+        for arguments in [["show"], ["show", "0"], ["show", "-1"], ["show", "big"],
+                          ["show", "42", "--include-command-lines", "--include-command-lines"], ["show", "42", "--csv"]]
+        {
+            #expect(throws: CLIUsageError.self) { try CLICommand.parse(arguments) }
+        }
+        let harness = try AgentHarness()
+        harness.source.update {
+            $0.processes[42]?.bsdInfo.ppid = 43
+            $0.commandLines[42] = ProcessCommandLine(arguments: ["node", "server.js", "--token=test-secret"])
+            $0.commandLines[43] = ProcessCommandLine(arguments: ["zsh", "-l"])
+            $0.workingDirectories[42] = WorkingDirectory(value: "/private/project")
+        }
+        let plain = harness.client(.cli)
+        let hidden = try await showProcess(service: plain, pid: 42)
+        #expect(hidden.ancestors?.map(\.pid) == [43])
+        #expect(processSummary(hidden).contains("Command lines hidden"))
+        let enabled = harness.client(.cli, flags: command.requestedPermissions)
+        let detail = try await showProcess(service: enabled, pid: 42)
+        let text = processSummary(detail)
+        #expect(text.contains("Launched by (root first):\n  worker-43 (43)\n    zsh -l"))
+        #expect(text.contains("Parent chain incomplete"))
+        #expect(text.contains("Command: node server.js --token=<redacted>"))
+        #expect(text.contains("Working directory: /private/project"))
+        #expect(!text.contains("test-secret"))
+        #expect(try !jsonOutput(detail).contains("test-secret"))
+        await plain.invalidate()
+        await enabled.invalidate()
+        await harness.close()
+    }
+
     @Test func csvUsesRFC4180QuotingAndCRLF() {
         #expect(csvRow(["plain", "", "a,b", "say \"hi\"", "a\rb", "a\nb", "日本語"]) ==
             "plain,,\"a,b\",\"say \"\"hi\"\"\",\"a\rb\",\"a\nb\",日本語\r\n")

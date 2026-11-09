@@ -60,9 +60,15 @@ final class SettingsWindowController: NSWindowController {
         menuBar.target = self
         menuBar.action = #selector(toggleMenuBar)
         let permissionViews: [NSView] = Permission.allCases.map { permission in
-            let button = NSButton(checkboxWithTitle: permission.rawValue, target: self, action: #selector(togglePermission(_:)))
+            let title = permission == .includeCommandLines ? "Show command lines and working directory" : permission.rawValue
+            let button = NSButton(checkboxWithTitle: title, target: self, action: #selector(togglePermission(_:)))
             button.identifier = NSUserInterfaceItemIdentifier(permission.rawValue)
+            button.setAccessibilityIdentifier(permission.rawValue)
             permissionButtons[permission] = button
+            if permission == .includeCommandLines {
+                let warning = NSTextField(wrappingLabelWithString: "Arguments can contain secrets; redaction is best-effort.")
+                return verticalStack([button, warning], spacing: 2)
+            }
             return button
         }
         let note = NSTextField(wrappingLabelWithString: "Permissions cap GUI and MCP access. MCP launch flags further restrict access. The MCP host may send process results to external models. Never enable permissions you do not want to share.")

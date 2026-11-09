@@ -21,6 +21,7 @@ public struct MCPFlags: Sendable, Equatable {
             case "--allow-force-kill": flags.permissions.insert(.forceKill)
             case "--include-system": flags.permissions.insert(.includeSystem)
             case "--include-paths": flags.permissions.insert(.includePaths)
+            case "--include-command-lines": flags.permissions.insert(.includeCommandLines)
             case "--help": flags.help = true
             default: throw MCPFlagError(argument: argument)
             }
@@ -30,8 +31,9 @@ public struct MCPFlags: Sendable, Equatable {
 
     public static let usage = """
     Usage: procglint-mcp [--allow-observe] [--allow-configure] [--allow-terminate]
-                         [--allow-force-kill] [--include-system] [--include-paths] [--help]
-    Default: read-only, own processes, no paths. Force kill also requires --allow-terminate.
+                         [--allow-force-kill] [--include-system] [--include-paths]
+                         [--include-command-lines] [--help]
+    Default: read-only, own processes, no paths or command lines. Force kill also requires --allow-terminate.
     """
 }
 

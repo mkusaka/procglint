@@ -35,7 +35,7 @@ import Testing
     await model.tick()
     #expect(service.historyRequests.map(\.series) == [["system", process.processKey.rawValue]])
     #expect(service.queries.count == 2) // Main page plus the pin lookup (not represented by the contract's row).
-    #expect(service.processCalls.isEmpty)
+    #expect(service.processCalls == [process.processKey]) // Lineage is available even when paths/arguments are hidden.
 }
 
 @MainActor

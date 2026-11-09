@@ -24,7 +24,7 @@ if command == .help {
 }
 
 signal(SIGPIPE, SIG_IGN)
-let client = AgentClient(clientKind: .cli)
+let client = AgentClient(clientKind: .cli, mcpFlags: command.requestedPermissions)
 var exitCode: Int32 = 0
 do {
     let output: String
@@ -45,6 +45,9 @@ do {
         let report = doctorReport(bundle: bundle, registration: registration, agent: reachability)
         output = report.text
         exitCode = report.healthy ? 0 : 1
+    case let .show(pid, json, _):
+        let process = try await showProcess(service: client, pid: pid)
+        output = try json ? jsonOutput(process) : processSummary(process)
     case let .snapshot(format, all):
         let snapshot = try await exportSnapshot(service: client, all: all)
         output = try format == .json ? jsonOutput(snapshot) : snapshotCSV(snapshot)
