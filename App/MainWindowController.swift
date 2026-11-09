@@ -14,9 +14,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     let feedback = NSTextField(wrappingLabelWithString: "")
     let systemCPUChart = HistoryChartView(label: "System CPU history, percent", fields: [{ $0.cpuPercent }], compact: true, format: Display.percent)
     let systemMemoryChart = HistoryChartView(label: "System memory used history, bytes", fields: [{ $0.memoryUsedBytes }], compact: true, format: Display.bytes)
+    let systemPressureChart = HistoryChartView(label: "Memory pressure history, percent", fields: [{ $0.memoryPressurePercent }], compact: true, pressureArea: true, format: { String(format: "%.0f%%", $0) })
+    let chartCursor = ChartCursor()
     let cpuChart = HistoryChartView(label: "CPU history, percent (one core = 100%)", fields: [{ $0.cpuPercent }], format: Display.percent)
     let memoryChart = HistoryChartView(label: "Memory (footprint) history, bytes", fields: [{ $0.footprintBytes }], format: Display.bytes)
-    let ioChart = HistoryChartView(label: "I/O history, bytes per second; blue read, orange write", fields: [{ $0.diskReadBps }, { $0.diskWriteBps }], format: { Display.bytes($0) + "/s" })
+    let ioChart = HistoryChartView(label: "I/O history, bytes per second; blue read, orange write", fields: [{ $0.diskReadBps }, { $0.diskWriteBps }], fieldLabels: ["Read", "Write"], format: { Display.bytes($0) + "/s" })
     let pin = NSButton(checkboxWithTitle: "Pin process history", target: nil, action: nil)
     let quitProcess = NSButton(title: "Quit (SIGTERM)", target: nil, action: nil)
     let killProcess = NSButton(title: "Force Quit (SIGKILL)", target: nil, action: nil)
@@ -45,6 +47,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         window.setAccessibilityIdentifier("mainWindow")
         window.minSize = NSSize(width: 1000, height: 650)
         window.isReleasedWhenClosed = false
+        window.acceptsMouseMovedEvents = true
         super.init(window: window)
         window.delegate = self
         window.center()
@@ -63,6 +66,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     private func buildUI(_ window: NSWindow) {
         systemCPUChart.setAccessibilityIdentifier("systemCPUChart")
         systemMemoryChart.setAccessibilityIdentifier("systemMemoryChart")
+        systemPressureChart.setAccessibilityIdentifier("systemPressureChart")
+        for chart in [systemCPUChart, systemMemoryChart, systemPressureChart, cpuChart, memoryChart, ioChart] {
+            chart.cursor = chartCursor
+        }
         cpuChart.setAccessibilityIdentifier("processCPUChart")
         memoryChart.setAccessibilityIdentifier("processMemoryChart")
         ioChart.setAccessibilityIdentifier("processIOChart")
@@ -140,15 +147,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         listContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 600).isActive = true
         let cpuSummary = verticalStack([NSTextField(labelWithString: "System CPU · 0–100%"), systemCPUChart], spacing: 2)
         let memorySummary = verticalStack([NSTextField(labelWithString: "Memory used / physical"), systemMemoryChart], spacing: 2)
-        for group in [cpuSummary, memorySummary] {
+        let pressureSummary = verticalStack([NSTextField(labelWithString: "Memory pressure"), systemPressureChart], spacing: 2)
+        for group in [cpuSummary, memorySummary, pressureSummary] {
             group.widthAnchor.constraint(equalToConstant: 160).isActive = true
         }
-        for chart in [systemCPUChart, systemMemoryChart] {
+        for chart in [systemCPUChart, systemMemoryChart, systemPressureChart] {
             chart.widthAnchor.constraint(equalToConstant: 160).isActive = true
         }
         summary.setContentHuggingPriority(.defaultLow, for: .horizontal)
         summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let summaryBar = NSStackView(views: [summary, cpuSummary, memorySummary])
+        let summaryBar = NSStackView(views: [summary, cpuSummary, memorySummary, pressureSummary])
         summaryBar.distribution = .fill
         summaryBar.alignment = .top
         summaryBar.spacing = 16
@@ -271,6 +279,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         systemCPUChart.update(model.systemHistory, fixedYRange: 0 ... 100)
         let physical = model.header.map { Double($0.system.physicalMemoryBytes) } ?? 0
         systemMemoryChart.update(model.systemHistory, fixedYRange: physical > 0 ? 0 ... physical : nil)
+        systemPressureChart.update(model.systemHistory, fixedYRange: 0 ... 100)
         cpuChart.update(model.history)
         memoryChart.update(model.history)
         ioChart.update(model.history)
@@ -327,6 +336,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     func windowDidResignKey(_: Notification) {
+        if let chart = chartCursor.hoveredChart {
+            chartCursor.clear(from: chart)
+        }
         focusChanged?()
     }
 

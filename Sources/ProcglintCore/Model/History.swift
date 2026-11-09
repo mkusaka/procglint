@@ -7,9 +7,12 @@ public struct HistoryPoint: Sendable, Codable, Equatable {
     public var diskReadBps: Metric?
     public var diskWriteBps: Metric?
     public var memoryUsedBytes: Metric?
+    public var memoryPressurePercent: Metric?
+    public var memoryPressure: MemoryPressure?
 
     public init(t: Date, cpuPercent: Metric, footprintBytes: Metric? = nil, diskReadBps: Metric? = nil,
-                diskWriteBps: Metric? = nil, memoryUsedBytes: Metric? = nil)
+                diskWriteBps: Metric? = nil, memoryUsedBytes: Metric? = nil,
+                memoryPressurePercent: Metric? = nil, memoryPressure: MemoryPressure? = nil)
     {
         self.t = t
         self.cpuPercent = cpuPercent
@@ -17,6 +20,8 @@ public struct HistoryPoint: Sendable, Codable, Equatable {
         self.diskReadBps = diskReadBps
         self.diskWriteBps = diskWriteBps
         self.memoryUsedBytes = memoryUsedBytes
+        self.memoryPressurePercent = memoryPressurePercent
+        self.memoryPressure = memoryPressure
     }
 }
 

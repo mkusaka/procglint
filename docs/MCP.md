@@ -90,12 +90,14 @@ Snapshot headers contain `agent_instance_id`, `snapshot_id`, `sampled_at`, `inte
 ```json
 {
   "memory_pressure": { "value": "warning", "status": "ok" },
+  "memory_pressure_percent": { "value": 65, "status": "ok" },
   "swap_used_bytes": { "value": 10400000000, "status": "ok" },
   "swap_total_bytes": { "value": 12000000000, "status": "ok" }
 }
 ```
 
 - `memory_pressure` follows the Metric envelope, but its value is categorical: `normal`, `warning`, or `critical`. It reads `kern.memorystatus_vm_pressure_level` once per collection: 1 → normal, 2 → warning, 4 → critical. Any other level or read failure yields `{ "value": null, "status": "unsupported" }`, never Normal.
+- `memory_pressure_percent` is a numeric Metric, 0–100: `100 − kern.memorystatus_level` (available-memory percent), read once per collection. Out-of-range levels and other read failures yield `unsupported`; access errors yield `permission_denied`. Older agents that omit the field decode as `unsupported`. It supplements, rather than replaces, categorical pressure; graph colours use the recorded category, not numeric thresholds.
 - Swap fields are numeric byte Metrics from `vm.swapusage` (`xsw_usage.xsu_used` / `xsu_total`), read once per collection. Failure is explicit (`permission_denied` for access errors, otherwise `unsupported`); no missing value is replaced by zero. Total is currently allocated swap, not a fixed capacity limit.
 - Warning/Critical is a better first signal of memory trouble than a large Used total. Swap may remain nonzero after pressure subsides; compression alone is not evidence of trouble. `memory_used_bytes` retains its existing active + wired + compressor-page definition.
 - The GUI's **Memory** column and inspector **Memory (footprint)** are labels for the unchanged `footprint_bytes` field (`ri_phys_footprint`, Activity Monitor's Memory column). It includes compressed/swapped charges; optional RSS counts shared pages. No JSON field or sort name was renamed.
@@ -109,7 +111,7 @@ Status reads still return diagnostics if the snapshot read fails, with `system: 
 3. Let samples accumulate, then call `get_history` with `{ "series": ["<returned observation_id>"] }`. A system-only observation returns system history; one with process keys returns those process series. Add `"system"` as another selector when both are needed. Use `since` to reduce output.
 4. Stop early with `stop_observation` when finished. Expiry or client disconnect releases the observation; there is no automatic renewal.
 
-History is shared, in memory, and bounded: by default 10 minutes, 600 points per series and 16 retained process series per agent (including pins and other clients' observations). System history is retained while sampling. Process history begins only when pinned, observed, or selected in a visible GUI window; there is no backfill. A series has `series`, `points` and `gaps: [{ "from": ..., "to": ... }]`. Process points carry CPU, footprint and disk rates; system points carry CPU and `memory_used_bytes`. Never interpolate across a gap as though sampling continued.
+History is shared, in memory, and bounded: by default 10 minutes, 600 points per series and 16 retained process series per agent (including pins and other clients' observations). System history is retained while sampling. Process history begins only when pinned, observed, or selected in a visible GUI window; there is no backfill. A series has `series`, `points` and `gaps: [{ "from": ..., "to": ... }]`. Process points carry CPU, footprint and disk rates; system points carry CPU, `memory_used_bytes`, `memory_pressure_percent` (Metric) and optional `memory_pressure` (`normal`, `warning`, `critical`) for colouring. Older points may omit both pressure fields. Never interpolate across a gap as though sampling continued.
 
 ### Termination requires two calls and human approval
 

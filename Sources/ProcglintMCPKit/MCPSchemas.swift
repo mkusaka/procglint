@@ -51,6 +51,7 @@ enum Schema {
         fields["cpu_percent"] = metric
         fields["memory_pressure"] = object(["value": nullable(strings(MemoryPressure.allCases.map(\.rawValue))),
                                             "status": strings(MetricStatus.allCases.map(\.rawValue))], required: ["value", "status"])
+        fields["memory_pressure_percent"] = metric
         fields["swap_used_bytes"] = metric
         fields["swap_total_bytes"] = metric
         return object(fields, required: fields.keys.sorted())
@@ -85,7 +86,8 @@ enum Schema {
     static let history = object([
         "series": string(),
         "points": array(object(["t": date, "cpu_percent": metric, "footprint_bytes": metric, "disk_read_bps": metric,
-                                "disk_write_bps": metric, "memory_used_bytes": metric], required: ["t", "cpu_percent"])),
+                                "disk_write_bps": metric, "memory_used_bytes": metric, "memory_pressure_percent": metric,
+                                "memory_pressure": strings(MemoryPressure.allCases.map(\.rawValue))], required: ["t", "cpu_percent"])),
         "gaps": array(object(["from": date, "to": date], required: ["from", "to"])),
     ], required: ["series", "points", "gaps"])
     static let policy = object(["revision": integer(0), "gui_interval_ms": interval, "menu_bar_interval_ms": interval,

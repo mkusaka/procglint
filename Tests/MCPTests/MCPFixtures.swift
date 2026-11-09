@@ -14,7 +14,7 @@ func sample(name: String = "worker") throws -> ProcessSample {
 func makeSnapshot(name: String = "worker") throws -> Snapshot {
     let system = SystemMetrics(cpuPercent: .ok(25), physicalMemoryBytes: 4096, pageSize: 16384, memoryUsedBytes: 1024,
                                wiredBytes: 128, compressedBytes: 128, activeBytes: 768, inactiveBytes: 512, freeBytes: 2560,
-                               memoryPressure: .ok(.warning), swapUsedBytes: .ok(1024), swapTotalBytes: .ok(2048))
+                               memoryPressure: .ok(.warning), memoryPressurePercent: .ok(65), swapUsedBytes: .ok(1024), swapTotalBytes: .ok(2048))
     return try Snapshot(agentInstanceID: "agent-a", snapshotID: "agent-a-1", sampledAt: testDate, intervalMS: nil, ageMS: 0,
                         status: .warmingUp, coverage: Coverage(enumerated: 1, sampled: 1), system: system, processes: [sample(name: name)])
 }
@@ -71,6 +71,7 @@ actor TestMonitor: MonitorService {
         var snapshot = try makeSnapshot(name: largeName ?? "worker")
         if unavailableMemory {
             snapshot.system.memoryPressure = .unsupported
+            snapshot.system.memoryPressurePercent = .unsupported
             snapshot.system.swapUsedBytes = .unsupported
             snapshot.system.swapTotalBytes = .unsupported
         }
@@ -88,7 +89,7 @@ actor TestMonitor: MonitorService {
 
     func history(_ request: HistoryRequest) async throws -> [HistorySeries] {
         try await record("get_history", .encoded(request))
-        return request.series.map { HistorySeries(series: $0, points: [HistoryPoint(t: testDate, cpuPercent: .warmingUp)],
+        return request.series.map { HistorySeries(series: $0, points: [HistoryPoint(t: testDate, cpuPercent: .warmingUp, memoryPressurePercent: .ok(65), memoryPressure: .warning)],
                                                   gaps: [HistoryGap(from: testDate, to: testDate)]) }
     }
 

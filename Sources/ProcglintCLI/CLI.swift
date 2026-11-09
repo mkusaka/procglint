@@ -148,7 +148,14 @@ func statusSummary(_ status: MonitorStatus, system: SystemMetrics? = nil) -> Str
 }
 
 private func memorySummary(_ system: SystemMetrics?) -> String {
-    let pressure = system?.memoryPressure.value?.rawValue.capitalized ?? "Unavailable"
+    var pressure = system?.memoryPressure.value?.rawValue.capitalized ?? "Unavailable"
+    if let metric = system?.memoryPressurePercent {
+        if let value = metric.value {
+            pressure += String(format: " (%.0f%%)", locale: Locale(identifier: "en_US_POSIX"), value)
+        } else {
+            pressure += " (\(metric.status.rawValue))"
+        }
+    }
     func bytes(_ metric: Metric?) -> String {
         guard let metric, let value = metric.value else { return "unavailable (\(metric?.status.rawValue ?? "unsupported"))" }
         return String(format: "%.0f bytes", locale: Locale(identifier: "en_US_POSIX"), value)

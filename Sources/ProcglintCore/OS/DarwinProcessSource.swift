@@ -17,12 +17,19 @@ public final class DarwinProcessSource: SamplingProcessSource {
     public let machTimebase: MachTimebase
     private let readPressure: @Sendable (inout Int32) -> Int32
     private let readSwap: @Sendable (inout xsw_usage) -> Int32
+    private let readMemoryLevel: @Sendable (inout Int32) -> Int32
 
     public init(readPressure: @escaping @Sendable (inout Int32) -> Int32 = { pg_memory_pressure(&$0) },
-                readSwap: @escaping @Sendable (inout xsw_usage) -> Int32 = { pg_swap_usage(&$0) }) throws
+                readSwap: @escaping @Sendable (inout xsw_usage) -> Int32 = { pg_swap_usage(&$0) },
+                readMemoryLevel: @escaping @Sendable (inout Int32) -> Int32 = { level in
+                    var size = MemoryLayout<Int32>.size
+                    guard sysctlbyname("kern.memorystatus_level", &level, &size, nil, 0) == 0 else { return errno }
+                    return size == MemoryLayout<Int32>.size ? 0 : EINVAL
+                }) throws
     {
         self.readPressure = readPressure
         self.readSwap = readSwap
+        self.readMemoryLevel = readMemoryLevel
         var timebase = mach_timebase_info_data_t()
         try Self.checkMach(pg_timebase(&timebase))
         guard timebase.numer > 0, timebase.denom > 0 else {
@@ -165,7 +172,11 @@ public final class DarwinProcessSource: SamplingProcessSource {
         let unavailable: Metric = swapError == EACCES || swapError == EPERM ? .permissionDenied : .unsupported
         let validSwap = swapError == 0 && swap.xsu_used <= swap.xsu_total
         let pressureMetric: MemoryPressureMetric = pressureError == 0 ? pressure.map(MemoryPressureMetric.ok) ?? .unsupported : .unsupported
-        return SystemMemorySample(pressure: pressureMetric,
+        var available: Int32 = 0
+        let levelError = readMemoryLevel(&available)
+        let levelUnavailable: Metric = levelError == EACCES || levelError == EPERM ? .permissionDenied : .unsupported
+        let percent: Metric = levelError == 0 && (0 ... 100).contains(available) ? .ok(Double(100 - available)) : levelUnavailable
+        return SystemMemorySample(pressure: pressureMetric, pressurePercent: percent,
                                   swapUsed: validSwap ? .ok(Double(swap.xsu_used)) : unavailable,
                                   swapTotal: validSwap ? .ok(Double(swap.xsu_total)) : unavailable)
     }

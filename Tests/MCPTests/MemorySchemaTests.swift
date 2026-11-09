@@ -13,11 +13,24 @@ struct MemorySchemaTests {
             let content = try #require(result["result"]?["structuredContent"])
             let system = try #require(content["system"])
             #expect(system["memory_pressure"] == ["status": "unsupported", "value": .null])
+            #expect(system["memory_pressure_percent"] == ["status": "unsupported", "value": .null])
             #expect(system["swap_used_bytes"] == ["status": "unsupported", "value": .null])
             #expect(system["swap_total_bytes"] == ["status": "unsupported", "value": .null])
             let schema = name == "get_snapshot" ? Schema.snapshot : Schema.monitorStatus
             try schema.validate(content, at: "output")
         }
+    }
+
+    @Test func continuousPressureMatchesSnapshotStatusAndHistorySchemas() async throws {
+        let server = MCPServer(service: TestMonitor())
+        for name in ["get_snapshot", "get_monitor_status"] {
+            let result = try await call(server, name)
+            let content = try #require(result["result"]?["structuredContent"])
+            #expect(content["system"]?["memory_pressure_percent"] == ["status": "ok", "value": 65])
+            try (name == "get_snapshot" ? Schema.snapshot : Schema.monitorStatus).validate(content, at: "output")
+        }
+        let point = HistoryPoint(t: testDate, cpuPercent: .ok(25), memoryPressurePercent: .ok(65), memoryPressure: .warning)
+        try Schema.history.validate(JSONValue.encoded(HistorySeries(series: "system", points: [point])), at: "history")
     }
 
     @Test func statusRemainsUsefulIfSnapshotCannotBeRead() async throws {
@@ -35,7 +48,7 @@ struct MemorySchemaTests {
     @Test func newSystemFieldsAreRequiredAndCategoricalPressureIsNotNumeric() throws {
         let snapshot = try JSONValue.encoded(makeSnapshot())
         let system = try #require(snapshot["system"]?.object)
-        for key in ["memory_pressure", "swap_used_bytes", "swap_total_bytes"] {
+        for key in ["memory_pressure", "memory_pressure_percent", "swap_used_bytes", "swap_total_bytes"] {
             var missing = system
             missing.removeValue(forKey: key)
             #expect(throws: AgentError.self) { try Schema.system.validate(.object(missing), at: "system") }

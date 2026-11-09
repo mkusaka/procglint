@@ -45,6 +45,7 @@ public struct MemoryPressureMetric: Sendable, Codable, Equatable {
 
 struct SystemMemorySample: Sendable {
     var pressure: MemoryPressureMetric = .unsupported
+    var pressurePercent: Metric = .unsupported
     var swapUsed: Metric = .unsupported
     var swapTotal: Metric = .unsupported
 }

@@ -10,9 +10,9 @@ final class ProcglintUITests: XCTestCase {
             let window = app.windows["mainWindow"]
             XCTAssertTrue(window.waitForExistence(timeout: 10))
             expectValue(window.staticTexts["systemSummary"], contains: "CPU 25.0%")
-            expectValue(window.staticTexts["systemSummary"], contains: "Memory pressure: Normal")
+            expectValue(window.staticTexts["systemSummary"], contains: "Memory pressure: Normal · 39%")
             expectValue(window.staticTexts["systemSummary"], contains: "Used 4 GB of 8 GB · Swap 1 GB · Compressed 512 MB")
-            for identifier in ["systemCPUChart", "systemMemoryChart"] {
+            for identifier in ["systemCPUChart", "systemMemoryChart", "systemPressureChart"] {
                 let chart = window.images[identifier]
                 XCTAssertTrue(chart.waitForExistence(timeout: 5))
                 XCTAssertEqual(chart.frame.width, 160, accuracy: 1)
@@ -20,6 +20,23 @@ final class ProcglintUITests: XCTestCase {
             }
             expectValue(window.staticTexts["processCount"], equals: "20 of 20 processes")
             XCTAssertEqual(window.tables["processTable"].tableRows.count, 20)
+        }
+    }
+
+    func testHoverSharesCursorReadoutAcrossHeaderAndInspectorCharts() throws {
+        try withApp { app, _ in
+            search("4100", in: app)
+            app.staticTexts["process.4100.name"].click()
+            let cpu = app.images["systemCPUChart"]
+            let memory = app.images["systemMemoryChart"]
+            XCTAssertTrue(cpu.waitForExistence(timeout: 5))
+            cpu.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).hover()
+            wait(for: NSPredicate(format: "help CONTAINS %@", "Cursor: 4.0 GiB"), on: memory)
+            wait(for: NSPredicate(format: "help CONTAINS %@", "Cursor: 65%"), on: app.images["systemPressureChart"])
+            wait(for: NSPredicate(format: "help CONTAINS %@", "Cursor: 1.0 MiB"), on: app.images["processMemoryChart"])
+            XCTAssertEqual(memory.value as? String, "4.0 GiB")
+            app.searchFields["processSearch"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
+            wait(for: NSPredicate(format: "help == nil OR NOT (help BEGINSWITH %@)", "Cursor:"), on: memory)
         }
     }
 

@@ -87,6 +87,7 @@ Every measured value that can be missing is a `Metric`:
 `SystemMetrics`: `cpu_percent: Metric`, `physical_memory_bytes`, `page_size`, `memory_used_bytes`, `wired_bytes`, `compressed_bytes`, `active_bytes`, `inactive_bytes`, `free_bytes` (all from `host_statistics64(HOST_VM_INFO64)`; `memory_used_bytes = (active + wired + compressor pages) × page_size`, documented in `docs/PERFORMANCE.md`).
 - `memory_pressure`: `{value: "normal" | "warning" | "critical" | null, status}` from `kern.memorystatus_vm_pressure_level` (1/2/4); other values or read failure → `unsupported`.
 - `swap_used_bytes`, `swap_total_bytes`: `Metric` from one `vm.swapusage` read (`xsw_usage`; total is currently allocated swap). Access failure → `permission_denied`; other failures, malformed size or used > total → `unsupported`.
+- `memory_pressure_percent`: `Metric`, 0–100, `100 − kern.memorystatus_level` (available-memory percent), one read per collection. `EACCES`/`EPERM` → `permission_denied`; out-of-range level, malformed size or other failure → `unsupported`. Decoders treat absent `memory_pressure`, `memory_pressure_percent`, `swap_used_bytes`, `swap_total_bytes` as `unsupported`.
 - Decoders treat the three fields as `unsupported` when absent (snapshots from a 1.0.0 agent still running across an upgrade).
 - MCP `get_monitor_status` and `procglint status --json` add `system: SystemMetrics | null` from a shared snapshot read (`null` if that read fails). IPC `MonitorStatus` is unchanged.
 - The GUI labels `footprint_bytes` as **Memory** (same value as Activity Monitor's Memory column); field names, sort names and defaults are unchanged.
@@ -133,7 +134,7 @@ Never exposed: command-line arguments, environment, process memory.
 
 - Retained: system series always while sampling; process series only for pinned, observed, or GUI-selected processes.
 - Limits (defaults): 10 minutes window, 600 points per series, 16 process series per agent. To reserve slots, evict ownerless process series oldest-last-tracked first; active ownership exceeding the limit → `history_limit_reached`.
-- `HistoryPoint`: `t` (date), `cpu_percent`, `footprint_bytes`, `disk_read_bps`, `disk_write_bps` (Metric each; system uses `cpu_percent`, `memory_used_bytes`).
+- `HistoryPoint`: `t` (date), `cpu_percent`, `footprint_bytes`, `disk_read_bps`, `disk_write_bps` (Metric each; system uses `cpu_percent`, `memory_used_bytes`, and optional `memory_pressure_percent: Metric` and `memory_pressure: "normal" | "warning" | "critical"`; absent decodes as nil, process points omit them).
 - `HistorySeries`: `series` (`"system"` or a process_key), `points`, `gaps: [{from, to}]` — intervals where sampling was stopped or the process was not tracked. Charts draw no line across a gap. History never backfills unobserved time.
 - Cursor responses add `next_cursor?`, `is_delta` (default false) and `retained_point_count?` (0…600). A delta carries only new points and replaces the cached gap list; the client appends and keeps the last `retained_point_count` points. A full response replaces the cached series. Cursors bind to the store/buffer generation, series, query bounds and gap revision; agent restart, eviction of unseen points, buffer recreation, gap changes, overlapping or noncontiguous selections fall back to full data. Cursors are not authorization. MCP `get_history` is unchanged.
 

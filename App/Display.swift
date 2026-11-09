@@ -55,7 +55,9 @@ enum Display {
         guard let header, header.status != .unavailable, let pressure = header.system.memoryPressure.value else {
             return "Memory pressure: Unavailable"
         }
-        return "Memory pressure: \(pressure.rawValue.capitalized)"
+        let percent = metric(header.system.memoryPressurePercent, format: { String(format: "%.0f%%", $0) })
+        let suffix = percent.reason.map { " · — (\($0))" } ?? " · \(percent.text)"
+        return "Memory pressure: \(pressure.rawValue.capitalized)\(suffix)"
     }
 
     static func summary(_ header: SnapshotHeader?) -> String {

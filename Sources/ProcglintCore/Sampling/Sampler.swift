@@ -134,7 +134,8 @@ public actor Sampler {
             pageSize: page, memoryUsedBytes: (vm.activePages + vm.wiredPages + vm.compressorPages) * page,
             wiredBytes: vm.wiredPages * page, compressedBytes: vm.compressorPages * page,
             activeBytes: vm.activePages * page, inactiveBytes: vm.inactivePages * page, freeBytes: vm.freePages * page,
-            memoryPressure: memory.pressure, swapUsedBytes: memory.swapUsed, swapTotalBytes: memory.swapTotal
+            memoryPressure: memory.pressure, memoryPressurePercent: memory.pressurePercent,
+            swapUsedBytes: memory.swapUsed, swapTotalBytes: memory.swapTotal
         )
         // A failed census is not an empty successful sweep: keep baselines and live identities.
         var status: SnapshotStatus = .unavailable

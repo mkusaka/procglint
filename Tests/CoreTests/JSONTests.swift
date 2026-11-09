@@ -35,7 +35,7 @@ func roundTrip<T: Codable & Equatable>(_ value: T) throws {
 }
 
 let processGolden = #"{"cpu_percent":{"status":"ok","value":12.5},"cpu_time_ns":"18446744073709551615","disk_read_bps":{"status":"warming_up","value":null},"disk_read_bytes":{"status":"ok","value":10},"disk_write_bps":{"status":"permission_denied","value":null},"disk_written_bytes":{"status":"ok","value":20},"footprint_bytes":{"status":"ok","value":123},"is_own":true,"name":"worker","path":"/bin/worker","pid":42,"ppid":1,"process_key":"p1.boot-123.42.9007199254740993","rss_bytes":{"status":"ok","value":111},"start_time":"2024-01-01T00:00:00.125Z","status":"ok","uid":501,"user":"me"}"#
-let systemGolden = #"{"active_bytes":2560,"compressed_bytes":512,"cpu_percent":{"status":"ok","value":25},"free_bytes":2048,"inactive_bytes":2048,"memory_pressure":{"status":"ok","value":"normal"},"memory_used_bytes":4096,"page_size":4096,"physical_memory_bytes":8192,"swap_total_bytes":{"status":"ok","value":12000000000},"swap_used_bytes":{"status":"ok","value":10400000000},"wired_bytes":1024}"#
+let systemGolden = #"{"active_bytes":2560,"compressed_bytes":512,"cpu_percent":{"status":"ok","value":25},"free_bytes":2048,"inactive_bytes":2048,"memory_pressure":{"status":"ok","value":"normal"},"memory_pressure_percent":{"status":"unsupported","value":null},"memory_used_bytes":4096,"page_size":4096,"physical_memory_bytes":8192,"swap_total_bytes":{"status":"ok","value":12000000000},"swap_used_bytes":{"status":"ok","value":10400000000},"wired_bytes":1024}"#
 
 @Test func processGoldenJSON() throws {
     let process = try testProcess()

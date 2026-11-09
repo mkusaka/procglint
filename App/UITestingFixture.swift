@@ -54,7 +54,7 @@ final class UITestingFixture: MonitorService {
                                   memoryUsedBytes: 4_294_967_296, wiredBytes: 1_073_741_824,
                                   compressedBytes: 536_870_912, activeBytes: 2_684_354_560,
                                   inactiveBytes: 1_073_741_824, freeBytes: 3_221_225_472,
-                                  memoryPressure: .ok(.normal), swapUsedBytes: .ok(1_073_741_824), swapTotalBytes: .ok(2_147_483_648)),
+                                  memoryPressure: .ok(.normal), memoryPressurePercent: .ok(39), swapUsedBytes: .ok(1_073_741_824), swapTotalBytes: .ok(2_147_483_648)),
             processes: rows
         )
         store = SnapshotStore(clock: FakeClock())
@@ -96,7 +96,9 @@ final class UITestingFixture: MonitorService {
                 HistoryPoint(t: date.addingTimeInterval(offset), cpuPercent: .ok(25),
                              footprintBytes: series == "system" ? nil : .ok(1_048_576),
                              diskReadBps: .ok(1024), diskWriteBps: .ok(2048),
-                             memoryUsedBytes: series == "system" ? .ok(4_294_967_296) : nil)
+                             memoryUsedBytes: series == "system" ? .ok(4_294_967_296) : nil,
+                             memoryPressurePercent: series == "system" ? .ok(offset <= -20 ? 65 : 39) : nil,
+                             memoryPressure: series == "system" ? (offset <= -20 ? .warning : .normal) : nil)
             }
             return HistorySeries(series: series, points: points,
                                  gaps: [HistoryGap(from: date.addingTimeInterval(-19), to: date.addingTimeInterval(-6))])

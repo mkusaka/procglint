@@ -186,7 +186,7 @@ import Testing
     let service = try FakeMonitorService(rows: [process])
     let time = Date()
     service.historySeries["system"] = HistorySeries(series: "system", points: [
-        HistoryPoint(t: time, cpuPercent: .ok(25), memoryUsedBytes: .ok(4096)),
+        HistoryPoint(t: time, cpuPercent: .ok(25), memoryUsedBytes: .ok(4096), memoryPressurePercent: .ok(39), memoryPressure: .normal),
     ])
     service.historySeries[process.processKey.rawValue] = HistorySeries(series: process.processKey.rawValue, points: [
         HistoryPoint(t: time, cpuPercent: .ok(12.5), footprintBytes: .ok(2048), diskReadBps: .ok(1024), diskWriteBps: .ok(512)),
@@ -199,11 +199,14 @@ import Testing
     await model.refreshInspector()
     #expect(controller.systemCPUChart.accessibilityIdentifier() == "systemCPUChart")
     #expect(controller.systemMemoryChart.accessibilityIdentifier() == "systemMemoryChart")
+    #expect(controller.systemPressureChart.accessibilityIdentifier() == "systemPressureChart")
     #expect(controller.cpuChart.accessibilityIdentifier() == "processCPUChart")
     #expect(controller.memoryChart.accessibilityIdentifier() == "processMemoryChart")
     #expect(controller.ioChart.accessibilityIdentifier() == "processIOChart")
     controller.render()
     #expect(controller.systemCPUChart.fixedYRange == 0 ... 100)
+    #expect(controller.systemPressureChart.fixedYRange == 0 ... 100)
+    #expect(controller.systemPressureChart.accessibilityValue() as? String == "39%")
     #expect(controller.systemMemoryChart.fixedYRange == 0 ... 8192)
     #expect(controller.cpuChart.fixedYRange == nil)
     #expect(controller.systemCPUChart.accessibilityLabel()?.contains("25.0%") == true)
@@ -233,7 +236,7 @@ import Testing
         let summaryRect = controller.summary.alignmentRect(forFrame: controller.summary.frame)
         let summaryFrame = summaryContainer.convert(summaryRect, to: content)
         var previousRight = summaryFrame.maxX
-        for chart in [controller.systemCPUChart, controller.systemMemoryChart] {
+        for chart in [controller.systemCPUChart, controller.systemMemoryChart, controller.systemPressureChart] {
             #expect(chart.bounds.size == NSSize(width: 160, height: 36))
             let group = try #require(chart.superview as? NSStackView)
             let label = try #require(group.arrangedSubviews.first as? NSTextField)
