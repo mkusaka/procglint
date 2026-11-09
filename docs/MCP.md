@@ -66,7 +66,7 @@ Inputs below are tool `arguments`, not JSON-RPC envelopes. Unknown properties, w
 | `list_processes` | Optional `search`, `filter`, `sort`, `order`, `limit`, `cursor`, `fields`; see below | `snapshot` header, `items`, optional `next_cursor`, `total_matched` |
 | `get_process` | Required `process_key` | One process sample; path only with effective `include_paths` permission |
 | `get_history` | Required `series` array (1–17 selectors, enforced by the agent): `"system"`, process keys, or this client's observation IDs; optional nullable `since` | `{ "series": [HistorySeries, ...] }`; retained data only |
-| `get_monitor_status` | None (`{}`) | Agent/client CPU and footprint, sampling state, interval, collection counts/times, coverage, failures, leases, estimated history bytes, current `policy` |
+| `get_monitor_status` | None (`{}`) | Agent/client CPU and footprint, sampling state, interval, collection counts/times, coverage, failures, leases, estimated history bytes, current `policy`, and `system` from a shared snapshot read (`null` if that read fails) |
 | `start_observation` | Required `interval_ms` (1000/2000/5000/10000), `duration_ms` (1000–60000); optional `process_keys` (default empty, at most 16) | `observation_id`, `interval_ms`, `started_at`, `expires_at`, `process_keys`, `state` (`active`, `expired`, `stopped`); returns immediately, no auto-renewal |
 | `stop_observation` | Required `observation_id` belonging to this client | `{ "observation_id": "…", "stopped": true }` |
 | `set_sampling_policy` | All required: `expected_revision` (integer ≥ 0), `gui_interval_ms`, `menu_bar_interval_ms`, `history_minutes`, `max_process_series` | Replaced policy with new `revision`; intervals 1000/2000/5000/10000, history 1–10 minutes, process series 1–16 |
@@ -82,6 +82,25 @@ Inputs below are tool `arguments`, not JSON-RPC envelopes. Unknown properties, w
 - `fields`: nullable array selecting process fields. `process_key` is always included. Names: `process_key`, `pid`, `ppid`, `name`, `uid`, `user`, `is_own`, `status`, `cpu_percent`, `cpu_time_ns`, `footprint_bytes`, `rss_bytes`, `disk_read_bytes`, `disk_written_bytes`, `disk_read_bps`, `disk_write_bps`, `start_time`, `path`.
 
 Snapshot headers contain `agent_instance_id`, `snapshot_id`, `sampled_at`, `interval_ms`, `age_ms`, `status`, `coverage` and `system`. Coverage reports enumerated, sampled, permission-denied and exited-during-sample counts. `set_sampling_policy` replaces the whole policy, not a patch: first read `get_monitor_status.policy`, preserve unchanged values, and pass its `revision` as `expected_revision`. On `revision_conflict`, fetch and review again.
+
+### System memory: pressure first
+
+`get_snapshot.system`, `list_processes.snapshot.system` and `get_monitor_status.system` include these fields alongside all existing CPU/VM fields:
+
+```json
+{
+  "memory_pressure": { "value": "warning", "status": "ok" },
+  "swap_used_bytes": { "value": 10400000000, "status": "ok" },
+  "swap_total_bytes": { "value": 12000000000, "status": "ok" }
+}
+```
+
+- `memory_pressure` follows the Metric envelope, but its value is categorical: `normal`, `warning`, or `critical`. It reads `kern.memorystatus_vm_pressure_level` once per collection: 1 → normal, 2 → warning, 4 → critical. Any other level or read failure yields `{ "value": null, "status": "unsupported" }`, never Normal.
+- Swap fields are numeric byte Metrics from `vm.swapusage` (`xsw_usage.xsu_used` / `xsu_total`), read once per collection. Failure is explicit (`permission_denied` for access errors, otherwise `unsupported`); no missing value is replaced by zero. Total is currently allocated swap, not a fixed capacity limit.
+- Warning/Critical is a better first signal of memory trouble than a large Used total. Swap may remain nonzero after pressure subsides; compression alone is not evidence of trouble. `memory_used_bytes` retains its existing active + wired + compressor-page definition.
+- The GUI's **Memory** column and inspector **Memory (footprint)** are labels for the unchanged `footprint_bytes` field (`ri_phys_footprint`, Activity Monitor's Memory column). It includes compressed/swapped charges; optional RSS counts shared pages. No JSON field or sort name was renamed.
+
+Status reads still return diagnostics if the snapshot read fails, with `system: null`. The bridge uses the shared agent snapshot; it does not sample the OS or acquire a periodic lease.
 
 ### Observe only what you need
 

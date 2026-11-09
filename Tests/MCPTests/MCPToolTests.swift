@@ -60,13 +60,17 @@ struct MCPToolTests {
         let definition = try #require(definitions?.first { $0["name"] == .string(name) })
         let outputSchema = try #require(definition["outputSchema"])
         try outputSchema.validate(content, at: "structuredContent")
-        let recorded = try #require(await service.calls.last)
+        let calls = await service.calls
+        let recorded = try #require(name == "get_monitor_status" ? calls.first : calls.last)
         #expect(recorded.0 == name)
         switch name {
         case "get_snapshot":
             #expect(recorded.1 == arguments)
             #expect(content["processes"]?.elements?.first?["cpu_time_ns"] == "9007199254740993")
             #expect(content["system"]?["cpu_percent"]?["value"] == 25)
+            #expect(content["system"]?["memory_pressure"] == ["status": "ok", "value": "warning"])
+            #expect(content["system"]?["swap_used_bytes"] == ["status": "ok", "value": 1024])
+            #expect(content["system"]?["swap_total_bytes"] == ["status": "ok", "value": 2048])
             #expect(content["processes"]?.elements?.first?["cpu_percent"]?["value"] == 125)
         case "list_processes":
             #expect(recorded.1["filter"] == "all")
@@ -75,7 +79,12 @@ struct MCPToolTests {
             #expect(content["next_cursor"] == "cursor-a")
         case "get_process": #expect(recorded.1 == "p1.boot-a.42.1")
         case "get_history": #expect(recorded.1["series"] == arguments["series"])
-        case "get_monitor_status": #expect(content["collections_total"] == "9007199254740993")
+        case "get_monitor_status":
+            #expect(content["collections_total"] == "9007199254740993")
+            #expect(content["system"]?["memory_pressure"] == ["status": "ok", "value": "warning"])
+            #expect(content["system"]?["swap_used_bytes"]?["value"] == 1024)
+            #expect(content["system"]?["swap_total_bytes"]?["value"] == 2048)
+            #expect(calls.map(\.0) == ["get_monitor_status", "get_snapshot"])
         case "start_observation": #expect(recorded.1 == arguments)
         case "stop_observation": #expect(recorded.1 == "obs-a")
         case "set_sampling_policy":

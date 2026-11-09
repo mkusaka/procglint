@@ -85,6 +85,11 @@ Every measured value that can be missing is a `Metric`:
 `SnapshotStatus`: `warming_up` until the second sample exists (CPU needs two points); `stale` when `age_ms > 3 × effective interval`; `unavailable` when PID enumeration failed (never interpreted as "all processes exited").
 
 `SystemMetrics`: `cpu_percent: Metric`, `physical_memory_bytes`, `page_size`, `memory_used_bytes`, `wired_bytes`, `compressed_bytes`, `active_bytes`, `inactive_bytes`, `free_bytes` (all from `host_statistics64(HOST_VM_INFO64)`; `memory_used_bytes = (active + wired + compressor pages) × page_size`, documented in `docs/PERFORMANCE.md`).
+- `memory_pressure`: `{value: "normal" | "warning" | "critical" | null, status}` from `kern.memorystatus_vm_pressure_level` (1/2/4); other values or read failure → `unsupported`.
+- `swap_used_bytes`, `swap_total_bytes`: `Metric` from one `vm.swapusage` read (`xsw_usage`; total is currently allocated swap). Access failure → `permission_denied`; other failures, malformed size or used > total → `unsupported`.
+- Decoders treat the three fields as `unsupported` when absent (snapshots from a 1.0.0 agent still running across an upgrade).
+- MCP `get_monitor_status` and `procglint status --json` add `system: SystemMetrics | null` from a shared snapshot read (`null` if that read fails). IPC `MonitorStatus` is unchanged.
+- The GUI labels `footprint_bytes` as **Memory** (same value as Activity Monitor's Memory column); field names, sort names and defaults are unchanged.
 
 `ProcessSample`:
 

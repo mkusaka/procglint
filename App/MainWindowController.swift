@@ -15,7 +15,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     let systemCPUChart = HistoryChartView(label: "System CPU history, percent", fields: [{ $0.cpuPercent }], compact: true, format: Display.percent)
     let systemMemoryChart = HistoryChartView(label: "System memory used history, bytes", fields: [{ $0.memoryUsedBytes }], compact: true, format: Display.bytes)
     let cpuChart = HistoryChartView(label: "CPU history, percent (one core = 100%)", fields: [{ $0.cpuPercent }], format: Display.percent)
-    let memoryChart = HistoryChartView(label: "Footprint history, bytes", fields: [{ $0.footprintBytes }], format: Display.bytes)
+    let memoryChart = HistoryChartView(label: "Memory (footprint) history, bytes", fields: [{ $0.footprintBytes }], format: Display.bytes)
     let ioChart = HistoryChartView(label: "I/O history, bytes per second; blue read, orange write", fields: [{ $0.diskReadBps }, { $0.diskWriteBps }], format: { Display.bytes($0) + "/s" })
     let pin = NSButton(checkboxWithTitle: "Pin process history", target: nil, action: nil)
     let quitProcess = NSButton(title: "Quit (SIGTERM)", target: nil, action: nil)
@@ -99,6 +99,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             let item = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
             item.title = column.title
             item.headerCell.setAccessibilityIdentifier("column.\(column.rawValue)")
+            item.headerToolTip = column.tooltip
+            item.headerCell.setAccessibilityHelp(column.tooltip)
             item.width = column == .name ? 180 : 100
             item.isHidden = !model.preferences.visible(column)
             if column.sort != nil {
@@ -209,7 +211,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let stack = verticalStack([
             identity, path, pin, historyNote,
             NSTextField(labelWithString: "CPU · 1 core = 100%"), cpuChart,
-            NSTextField(labelWithString: "Memory footprint"), memoryChart,
+            NSTextField(labelWithString: "Memory (footprint)"), memoryChart,
             NSTextField(labelWithString: "Attributed disk I/O per second"), ioChart,
             quitProcess, killProcess, feedback,
         ])
@@ -231,8 +233,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         table.isHidden = !model.agentReachable
         table.usesAlternatingRowBackgroundColors = model.agentReachable && !model.rows.isEmpty
         count.isHidden = !model.agentReachable
-        summary.stringValue = model.summary
-        summary.toolTip = model.message
+        let text = NSMutableAttributedString(string: model.summary, attributes: [.foregroundColor: NSColor.labelColor])
+        let badgeColor: NSColor = switch model.header?.status == .unavailable ? nil : model.header?.system.memoryPressure.value {
+        case .normal: .systemGreen
+        case .warning: .systemYellow
+        case .critical: .systemRed
+        case nil: .secondaryLabelColor
+        }
+        text.addAttributes([.backgroundColor: badgeColor.withAlphaComponent(0.2),
+                            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)],
+                           range: NSRange(location: 0, length: Display.pressure(model.header).utf16.count))
+        summary.attributedStringValue = text
+        summary.toolTip = [Display.summaryTooltip(model.header), model.message].filter { !$0.isEmpty }.joined(separator: "\n")
+        summary.setAccessibilityHelp(summary.toolTip)
         if renderedRows != model.rows {
             renderedRows = model.rows
             dataSource.reload(table)

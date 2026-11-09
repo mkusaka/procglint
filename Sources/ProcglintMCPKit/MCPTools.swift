@@ -71,7 +71,12 @@ struct MCPTools: Sendable {
             case "get_history":
                 let request = try JSONValue.object(arguments).decode(HistoryRequest.self)
                 return try await ["series": .encoded(service.history(request))]
-            case "get_monitor_status": return try await .encoded(service.status())
+            case "get_monitor_status":
+                let status = try await service.status()
+                let system = try? await service.snapshot(top: 1, sort: .cpu).system
+                var fields = try JSONValue.encoded(status).object ?? [:]
+                fields["system"] = try system.map(JSONValue.encoded) ?? .null
+                return .object(fields)
             case "start_observation":
                 let request = try JSONValue.object(arguments).decode(ObservationRequest.self)
                 return try await .encoded(service.startObservation(request))
@@ -115,7 +120,7 @@ struct MCPTools: Sendable {
         policyInput.removeValue(forKey: "revision")
         policyInput["expected_revision"] = Schema.integer(0)
         return [
-            tool("get_snapshot", "Recommended entry point: system summary and top processes. Process CPU uses 100% per core; missing metrics are not zero.",
+            tool("get_snapshot", "Recommended entry point: system memory pressure, swap, CPU and top processes. Memory is footprint_bytes, the Activity Monitor Memory column. Process CPU uses 100% per core; missing metrics are not zero.",
                  Schema.object(["top": Schema.integer(1, 200), "sort": sorts]), Schema.snapshot),
             tool("list_processes", "Search, sort and page processes. Default filter mine, sort cpu desc, limit 50 (max 200). Cursor is opaque and bound to one snapshot; always includes process_key.",
                  Schema.object(["search": Schema.nullable(Schema.text), "filter": Schema.strings(ProcessFilter.allCases.map(\.rawValue)),
@@ -127,7 +132,7 @@ struct MCPTools: Sendable {
             tool("get_history", "Read retained system, process or observation history. Selectors are system, opaque process_keys or observation_ids. No backfill; gaps are not zero. Use since to reduce output.",
                  Schema.object(["series": Schema.array(Schema.string(), minimum: 1), "since": Schema.nullable(Schema.date)], required: ["series"]),
                  Schema.object(["series": Schema.array(Schema.history)], required: ["series"])),
-            tool("get_monitor_status", "Inspect agent overhead, sampling, coverage, connected clients and current sampling policy.",
+            tool("get_monitor_status", "Inspect agent overhead, sampling, coverage, connected clients, current sampling policy and system memory pressure/swap. system is null if the shared snapshot cannot be read.",
                  Schema.object([:]), Schema.monitorStatus),
             tool("start_observation", "Start a bounded observation immediately; read results with get_history. No auto-renewal. Duration 1000–60000 ms, up to 16 processes, intervals 1/2/5/10 seconds.",
                  Schema.object(["interval_ms": interval, "duration_ms": Schema.integer(1000, 60000),

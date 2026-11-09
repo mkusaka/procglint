@@ -114,7 +114,20 @@ func jsonOutput(_ value: some Encodable) throws -> String {
     return text + "\n"
 }
 
-func statusSummary(_ status: MonitorStatus) -> String {
+struct CLIStatus: Encodable {
+    var status: MonitorStatus
+    var system: SystemMetrics?
+
+    func encode(to encoder: any Encoder) throws {
+        try status.encode(to: encoder)
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(system, forKey: .system)
+    }
+
+    enum CodingKeys: String, CodingKey { case system }
+}
+
+func statusSummary(_ status: MonitorStatus, system: SystemMetrics? = nil) -> String {
     let interval = status.effectiveIntervalMS.map { "\($0.milliseconds) ms" } ?? "none"
     let cpu = status.agentCPUPercent.value.map { "\($0)%" } ?? status.agentCPUPercent.status.rawValue
     let coverage = status.lastCoverage
@@ -123,6 +136,7 @@ func statusSummary(_ status: MonitorStatus) -> String {
     return """
     Agent: pid \(status.agentPID), instance \(status.agentInstanceID)
     Overhead: CPU \(cpu), footprint \(status.agentFootprintBytes) bytes
+    \(memorySummary(system))
     Sampling: \(status.samplingActive ? "active" : "idle"), effective interval \(interval)
     Collections: \(status.collectionsTotal), last \(status.lastCollectionMS) ms, p95 \(status.collectionP95MS) ms
     Coverage: \(coverage.sampled)/\(coverage.enumerated) sampled, \(coverage.permissionDenied) denied, \(coverage.exitedDuringSample) exited
@@ -131,6 +145,15 @@ func statusSummary(_ status: MonitorStatus) -> String {
     History: \(status.historyBytes) bytes
     Policy: revision \(status.policy.revision), GUI \(status.policy.guiIntervalMS.milliseconds) ms, menu bar \(status.policy.menuBarIntervalMS.milliseconds) ms, history \(status.policy.historyMinutes) min, max process series \(status.policy.maxProcessSeries)
     """ + "\n"
+}
+
+private func memorySummary(_ system: SystemMetrics?) -> String {
+    let pressure = system?.memoryPressure.value?.rawValue.capitalized ?? "Unavailable"
+    func bytes(_ metric: Metric?) -> String {
+        guard let metric, let value = metric.value else { return "unavailable (\(metric?.status.rawValue ?? "unsupported"))" }
+        return String(format: "%.0f bytes", locale: Locale(identifier: "en_US_POSIX"), value)
+    }
+    return "Memory pressure: \(pressure); Swap: \(bytes(system?.swapUsedBytes)) used of \(bytes(system?.swapTotalBytes))"
 }
 
 func containingApp(executable: URL) -> URL? {
@@ -214,6 +237,7 @@ func snapshotCSV(_ snapshot: Snapshot) -> String {
                            "coverage_enumerated", "coverage_sampled", "coverage_permission_denied", "coverage_exited_during_sample"]
     let systemHeaders = metricHeaders(["system_cpu_percent"]) + ["physical_memory_bytes", "page_size", "memory_used_bytes", "wired_bytes",
                                                                  "compressed_bytes", "active_bytes", "inactive_bytes", "free_bytes"]
+        + ["memory_pressure", "memory_pressure_status"] + metricHeaders(["swap_used_bytes", "swap_total_bytes"])
     let processHeaders = ["process_key", "pid", "ppid", "name", "uid", "user", "is_own", "process_status", "cpu_time_ns", "start_time", "path"]
     let metrics = ["cpu_percent", "footprint_bytes", "rss_bytes", "disk_read_bytes", "disk_written_bytes", "disk_read_bps", "disk_write_bps"]
     let common = [snapshot.agentInstanceID, snapshot.snapshotID, dateCell(snapshot.sampledAt), snapshot.intervalMS.map(String.init) ?? "",
@@ -221,7 +245,8 @@ func snapshotCSV(_ snapshot: Snapshot) -> String {
                   String(coverage.permissionDenied), String(coverage.exitedDuringSample)]
     let memory = [system.physicalMemoryBytes, system.pageSize, system.memoryUsedBytes, system.wiredBytes, system.compressedBytes,
                   system.activeBytes, system.inactiveBytes, system.freeBytes].map(String.init)
-    let prefix = common + metricCells(system.cpuPercent) + memory
+    let pressure = [system.memoryPressure.value?.rawValue ?? "", system.memoryPressure.status.rawValue]
+    let prefix = common + metricCells(system.cpuPercent) + memory + pressure + metricCells(system.swapUsedBytes) + metricCells(system.swapTotalBytes)
     var output = csvRow(snapshotHeaders + systemHeaders + processHeaders + metricHeaders(metrics))
     for process in snapshot.processes {
         let identity = [process.processKey.rawValue, String(process.pid), process.ppid.map(String.init) ?? "", process.name,

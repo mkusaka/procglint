@@ -4,6 +4,13 @@ import Foundation
 protocol SamplingProcessSource: ProcessSource {
     func samplingUsage(pid: Int32, startTimeUS: UInt64) throws -> SamplingUsage
     func processCensus() throws -> [SamplingProcess]
+    func systemMemory() -> SystemMemorySample
+}
+
+extension SamplingProcessSource {
+    func systemMemory() -> SystemMemorySample {
+        SystemMemorySample()
+    }
 }
 
 struct SamplingProcess: Sendable {

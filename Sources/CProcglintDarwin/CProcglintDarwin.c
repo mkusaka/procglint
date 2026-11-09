@@ -154,3 +154,15 @@ int pg_physical_memory(uint64_t *size) {
     if (sysctlbyname("hw.memsize", size, &length, NULL, 0) != 0) return errno;
     return 0;
 }
+
+int pg_memory_pressure(int32_t *level) {
+    size_t length = sizeof(*level);
+    if (sysctlbyname("kern.memorystatus_vm_pressure_level", level, &length, NULL, 0) != 0) return errno;
+    return length == sizeof(*level) ? 0 : EIO;
+}
+
+int pg_swap_usage(struct xsw_usage *usage) {
+    size_t length = sizeof(*usage);
+    if (sysctlbyname("vm.swapusage", usage, &length, NULL, 0) != 0) return errno;
+    return length == sizeof(*usage) ? 0 : EIO;
+}

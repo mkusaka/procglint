@@ -10,7 +10,8 @@ final class ProcglintUITests: XCTestCase {
             let window = app.windows["mainWindow"]
             XCTAssertTrue(window.waitForExistence(timeout: 10))
             expectValue(window.staticTexts["systemSummary"], contains: "CPU 25.0%")
-            expectValue(window.staticTexts["systemSummary"], contains: "Memory 4.0 GiB/8.0 GiB")
+            expectValue(window.staticTexts["systemSummary"], contains: "Memory pressure: Normal")
+            expectValue(window.staticTexts["systemSummary"], contains: "Used 4 GB of 8 GB · Swap 1 GB · Compressed 512 MB")
             for identifier in ["systemCPUChart", "systemMemoryChart"] {
                 let chart = window.images[identifier]
                 XCTAssertTrue(chart.waitForExistence(timeout: 5))

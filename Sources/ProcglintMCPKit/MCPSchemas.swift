@@ -49,6 +49,10 @@ enum Schema {
         var fields = Dictionary(uniqueKeysWithValues: ["physical_memory_bytes", "page_size", "memory_used_bytes", "wired_bytes",
                                                        "compressed_bytes", "active_bytes", "inactive_bytes", "free_bytes"].map { ($0, integer(0)) })
         fields["cpu_percent"] = metric
+        fields["memory_pressure"] = object(["value": nullable(strings(MemoryPressure.allCases.map(\.rawValue))),
+                                            "status": strings(MetricStatus.allCases.map(\.rawValue))], required: ["value", "status"])
+        fields["swap_used_bytes"] = metric
+        fields["swap_total_bytes"] = metric
         return object(fields, required: fields.keys.sorted())
     }()
 
@@ -108,7 +112,7 @@ enum Schema {
                                     "remaining_ms": integer(0)], required: ["kind", "interval_ms", "remaining_ms"])),
             "clients": array(object(["client_id": string(), "kind": strings(ClientKind.allCases.map(\.rawValue)), "pid": integer(0),
                                      "footprint_bytes": integer(0), "cpu_percent": metric], required: ["client_id", "kind", "pid", "footprint_bytes", "cpu_percent"])),
-            "history_bytes": integer(0), "policy": policy,
+            "history_bytes": integer(0), "policy": policy, "system": nullable(system),
         ]
         return object(fields, required: fields.keys.filter { $0 != "effective_interval_ms" }.sorted())
     }()

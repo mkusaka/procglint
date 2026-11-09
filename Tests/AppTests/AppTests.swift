@@ -25,7 +25,7 @@ func preferences() -> AppPreferences {
     #expect(ProcessColumn.writtenBytes.text(for: process).reason == "permission_denied")
     #expect(Display.summary(snapshot(status: .warmingUp).header).contains("CPU — (warming_up)"))
     #expect(Display.summary(snapshot(status: .stale).header).contains("stale"))
-    #expect(Display.summary(snapshot(status: .unavailable).header).contains("Memory —"))
+    #expect(Display.summary(snapshot(status: .unavailable).header).contains("Memory pressure: Unavailable"))
 }
 
 @MainActor
@@ -46,7 +46,8 @@ func preferences() -> AppPreferences {
     #expect(cell?.textField?.stringValue == "—")
     #expect(cell?.textField?.toolTip == "warming_up")
     #expect(model.summary.contains("25.0%"))
-    #expect(model.summary.contains("wired 1.0 KiB"))
+    #expect(!model.summary.contains("Wired"))
+    #expect(Display.summaryTooltip(model.header).contains("Wired: 1 KB"))
 }
 
 @MainActor

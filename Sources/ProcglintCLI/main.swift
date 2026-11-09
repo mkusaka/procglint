@@ -33,7 +33,8 @@ do {
     case .version: output = versionOutput(executable: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]))
     case let .status(json):
         let status = try await client.status()
-        output = try json ? jsonOutput(status) : statusSummary(status)
+        let system = try? await client.snapshot(top: 1, sort: .cpu).system
+        output = try json ? jsonOutput(CLIStatus(status: status, system: system)) : statusSummary(status, system: system)
     case .doctor:
         let executable = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
         let bundle = containingApp(executable: executable)

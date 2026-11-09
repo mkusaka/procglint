@@ -272,6 +272,44 @@ struct PerformanceMeasurements {
         #endif
     }
 
+    @Test func memorySysctlSweepCost() async throws {
+        let source = try DarwinProcessSource()
+        let baselineSource = try DarwinProcessSource(readPressure: { _ in ENOTSUP }, readSwap: { _ in ENOTSUP })
+        let measured = try Sampler(source: source, clock: SystemMonotonicClock())
+        let baseline = try Sampler(source: baselineSource, clock: SystemMonotonicClock())
+        _ = try await measured.sample()
+        _ = try await baseline.sample()
+        var syscallTimes: [Double] = []
+        for _ in 0 ..< 1000 {
+            let start = DispatchTime.now().uptimeNanoseconds
+            _ = source.systemMemory()
+            syscallTimes.append(milliseconds(since: start))
+        }
+        var withSysctls: [Double] = []
+        var withoutSysctls: [Double] = []
+        // Alternate the order to avoid always giving one variant warmer OS caches.
+        for index in 0 ..< 100 {
+            let pair = index.isMultiple(of: 2) ? [baseline, measured] : [measured, baseline]
+            for sampler in pair {
+                let start = DispatchTime.now().uptimeNanoseconds
+                _ = try await sampler.sample()
+                let duration = milliseconds(since: start)
+                if sampler === measured {
+                    withSysctls.append(duration)
+                } else {
+                    withoutSysctls.append(duration)
+                }
+            }
+        }
+        let median = withSysctls.sorted()[49]
+        let baselineMedian = withoutSysctls.sorted()[49]
+        let syscallP95 = p95(syscallTimes)
+        print("PERF memory n=100 paired_sweeps baseline_p50_ms=\(baselineMedian) baseline_p95_ms=\(p95(withoutSysctls)) with_sysctls_p50_ms=\(median) with_sysctls_p95_ms=\(p95(withSysctls)) delta_p50_ms=\(median - baselineMedian) sysctl_pair_n=1000 sysctl_pair_p50_ms=\(syscallTimes.sorted()[499]) sysctl_pair_p95_ms=\(syscallP95)")
+        #if !DEBUG
+            #expect(syscallP95 < 1, "The two memory sysctls should add less than 1 ms at p95")
+        #endif
+    }
+
     @Test func storeAndJSON() async throws {
         let clock = FakeClock()
         let sampler = try Sampler(source: populatedSource(), clock: clock, agentUID: 501)
