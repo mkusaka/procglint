@@ -240,9 +240,14 @@ func doctorReport(bundle: URL?, registration: AgentRegistration.Status?, agent: 
             lines.append("Agent registration: requires approval")
             healthy = false
         case .notRegistered, .notFound:
-            // SMAppService reports .notFound for a bundled agent that has never been registered.
-            lines.append("Agent registration: not registered")
-            healthy = false
+            // The CLI runs as a bundle helper, where SMAppService cannot see the app's registration;
+            // a reachable agent is the stronger signal. Unreachable: .notFound means never registered.
+            if case .success = agent {
+                lines.append("Agent registration: registered (agent is running)")
+            } else {
+                lines.append("Agent registration: not registered")
+                healthy = false
+            }
         case nil:
             lines.append("Agent registration: unknown")
             healthy = false

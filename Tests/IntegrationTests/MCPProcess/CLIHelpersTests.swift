@@ -193,8 +193,13 @@ struct CLIHelpersTests {
     func doctorChecksRegistrationEvenWhenAgentIsReachable(registration: AgentRegistration.Status) throws {
         let report = try doctorReport(bundle: URL(fileURLWithPath: "/Applications/Procglint.app"), registration: registration,
                                       agent: .success(fixtureStatus()))
-        #expect(report.healthy == (registration == .enabled))
+        // From the CLI helper SMAppService cannot see the app's registration, so a reachable agent wins
+        // except when approval is still pending.
+        #expect(report.healthy == (registration != .requiresApproval))
         #expect(report.text.contains("Agent registration:"))
+        if registration == .notRegistered || registration == .notFound {
+            #expect(report.text.contains("registered (agent is running)"))
+        }
         #expect(report.text.contains("Agent: reachable"))
         if !report.healthy {
             #expect(report.text.contains("Settings → Register"))
