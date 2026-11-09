@@ -10,7 +10,7 @@ func bundleCommitStampHandlesGitStates(state: String) throws {
     for directory in ["scripts", "Config", "bin"] {
         try FileManager.default.createDirectory(at: root.appendingPathComponent(directory), withIntermediateDirectories: true)
     }
-    for path in ["scripts/build-app.sh", "Config/Info.plist", "Config/io.github.mkusaka.procglint.agent.plist"] {
+    for path in ["scripts/build-app.sh", "Config/Info.plist", "Config/io.github.mkusaka.procglint.agent.plist", "Config/AppIcon.icns"] {
         try FileManager.default.copyItem(at: repository.appendingPathComponent(path), to: root.appendingPathComponent(path))
     }
     let stubs = [
