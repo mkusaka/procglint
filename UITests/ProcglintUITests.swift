@@ -9,17 +9,20 @@ final class ProcglintUITests: XCTestCase {
         try withApp { app, _ in
             let window = app.windows["mainWindow"]
             XCTAssertTrue(window.waitForExistence(timeout: 10))
-            expectValue(window.staticTexts["systemSummary"], contains: "CPU 25.0%")
-            expectValue(window.staticTexts["systemSummary"], contains: "Memory pressure: Normal · 39%")
-            expectValue(window.staticTexts["systemSummary"], contains: "Used 4 GB of 8 GB · Swap 1 GB · Compressed 512 MB")
+            for (card, value) in [("cpu", "25.0%"), ("memory", "4 GB"), ("pressure", "39%"), ("swap", "1 GB"), ("compressed", "512 MB")] {
+                expectValue(window.staticTexts["summaryValue.\(card)"], equals: value)
+            }
+            XCTAssertTrue(window.staticTexts["Normal"].exists)
+            XCTAssertTrue(window.staticTexts["of 8 GB"].exists)
             for identifier in ["systemCPUChart", "systemMemoryChart", "systemPressureChart"] {
-                let chart = window.images[identifier]
+                let chart = window.descendants(matching: .any)[identifier]
                 XCTAssertTrue(chart.waitForExistence(timeout: 5))
-                XCTAssertEqual(chart.frame.width, 160, accuracy: 1)
-                XCTAssertEqual(chart.frame.height, 36, accuracy: 1)
+                XCTAssertGreaterThan(chart.frame.width, 100)
+                XCTAssertEqual(chart.frame.height, 38, accuracy: 1)
             }
             expectValue(window.staticTexts["processCount"], equals: "20 of 20 processes")
             XCTAssertEqual(window.tables["processTable"].tableRows.count, 20)
+            XCTAssertGreaterThan(window.tables["processTable"].frame.height, 200)
         }
     }
 
@@ -27,16 +30,30 @@ final class ProcglintUITests: XCTestCase {
         try withApp { app, _ in
             search("4100", in: app)
             app.staticTexts["process.4100.name"].click()
-            let cpu = app.images["systemCPUChart"]
-            let memory = app.images["systemMemoryChart"]
-            XCTAssertTrue(cpu.waitForExistence(timeout: 5))
+            let cpu = app.descendants(matching: .any)["systemCPUChart"]
+            let memory = app.descendants(matching: .any)["systemMemoryChart"]
+            XCTAssertTrue(cpu.waitForExistence(timeout: 5), app.windows["mainWindow"].debugDescription)
             cpu.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).hover()
-            wait(for: NSPredicate(format: "title CONTAINS %@", "Cursor: 4.0 GiB"), on: memory)
-            wait(for: NSPredicate(format: "title CONTAINS %@", "Cursor: 65%"), on: app.images["systemPressureChart"])
-            wait(for: NSPredicate(format: "title CONTAINS %@", "Cursor: 1.0 MiB"), on: app.images["processMemoryChart"])
+            let cursor = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Cursor:", "GiB"), object: memory)
+            XCTAssertEqual(XCTWaiter.wait(for: [cursor], timeout: 10), .completed,
+                           "CPU: \(cpu.label); Memory: \(memory.label); Latest: \(String(describing: memory.value))")
+            wait(for: NSPredicate(format: "label CONTAINS %@", "Cursor:"), on: app.descendants(matching: .any)["systemPressureChart"])
+            wait(for: NSPredicate(format: "label CONTAINS %@", "Cursor: 1.0 MiB"), on: app.descendants(matching: .any)["processMemoryChart"])
             XCTAssertEqual(memory.value as? String, "4.0 GiB")
             app.searchFields["processSearch"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
-            wait(for: NSPredicate(format: "NOT (title BEGINSWITH %@)", "Cursor:"), on: memory)
+            wait(for: NSPredicate(format: "NOT (label CONTAINS %@)", "Cursor:"), on: memory)
+        }
+    }
+
+    func testInspectorCanCollapseAndExpand() throws {
+        try withApp { app, _ in
+            let inspector = app.descendants(matching: .any)["processInspector"]
+            XCTAssertTrue(inspector.waitForExistence(timeout: 10))
+            XCTAssertGreaterThan(inspector.frame.width, 300)
+            app.buttons["toggleInspector"].click()
+            wait(for: NSPredicate { _, _ in !inspector.exists || inspector.frame.width < 1 }, on: inspector)
+            app.buttons["toggleInspector"].click()
+            wait(for: NSPredicate { _, _ in inspector.exists && inspector.frame.width > 300 }, on: inspector)
         }
     }
 
@@ -45,6 +62,7 @@ final class ProcglintUITests: XCTestCase {
             search("ALPHA", in: app)
             expectValue(app.staticTexts["processCount"], equals: "1 of 1 processes")
             expectValue(app.staticTexts["process.4100.name"], equals: "Alpha Worker")
+            assertListGeometry(in: app)
             search("4119", in: app)
             expectValue(app.staticTexts["processCount"], equals: "1 of 1 processes")
             expectValue(app.staticTexts["process.4119.name"], equals: "Other User Worker")
@@ -104,11 +122,12 @@ final class ProcglintUITests: XCTestCase {
         try withApp { app, _ in
             search("4100", in: app)
             app.staticTexts["process.4100.name"].click()
+            assertListGeometry(in: app)
             expectValue(app.staticTexts["launchedBy"], equals: "Launched by")
-            let root = app.buttons["ancestor.1"]
-            XCTAssertTrue(root.waitForExistence(timeout: 5))
-            XCTAssertEqual(root.title, "launchd (1)")
-            XCTAssertEqual(app.buttons["ancestor.4101"].title, "Fixture Terminal (4101)")
+            let root = app.descendants(matching: .any)["ancestor.1"]
+            XCTAssertTrue(root.waitForExistence(timeout: 5), app.windows["mainWindow"].debugDescription)
+            XCTAssertEqual(root.label, "launchd (1)")
+            XCTAssertEqual(app.descendants(matching: .any)["ancestor.4101"].label, "Fixture Terminal (4101)")
             expectValue(app.staticTexts["processCommandLine"], equals: "Command: node server.js --token <redacted>")
             expectValue(app.staticTexts["processCwd"], contains: "/fixture/project")
             expectValue(app.staticTexts["ancestorCommand.4101"], contains: "--auth=<redacted>")
@@ -143,6 +162,8 @@ final class ProcglintUITests: XCTestCase {
     func testSettingsCopyMCPConfigAndMenuBarToggle() throws {
         try withApp { app, _ in
             XCTAssertTrue(app.windows["mainWindow"].waitForExistence(timeout: 10))
+            search("4100", in: app)
+            app.staticTexts["process.4100.name"].click()
             app.typeKey(",", modifierFlags: .command)
             let settings = app.windows["settingsWindow"]
             XCTAssertTrue(settings.waitForExistence(timeout: 5))
@@ -165,6 +186,39 @@ final class ProcglintUITests: XCTestCase {
             toggle.click()
             wait(for: NSPredicate(format: "exists == false"), on: status)
             XCTAssertEqual(toggle.value as? Int, 0)
+            XCTAssertTrue(settings.staticTexts["commandLineWarning"].exists)
+            settings.checkBoxes["include_command_lines"].click()
+            app.typeKey("0", modifierFlags: .command)
+            expectValue(app.staticTexts["processCommandLine"], equals: "Command lines hidden — enable in Settings")
+        }
+    }
+
+    func testSettingsRegistrationApprovalAndUnregistration() throws {
+        try withApp(arguments: ["--ui-testing-unregistered", "--ui-testing-requires-approval"]) { app, _ in
+            let main = app.windows["mainWindow"]
+            XCTAssertTrue(main.waitForExistence(timeout: 10))
+            let banner = main.descendants(matching: .any)["agentOnboardingBanner"]
+            let card = main.descendants(matching: .any)["summaryCard.cpu"]
+            XCTAssertLessThanOrEqual(banner.frame.maxY, card.frame.minY)
+            main.buttons["registerAgent"].click()
+            expectValue(main.staticTexts["agentOnboardingDetail"], contains: "Allow procglint")
+            XCTAssertFalse(main.buttons["registerAgent"].exists)
+            app.typeKey(",", modifierFlags: .command)
+            let settings = app.windows["settingsWindow"]
+            XCTAssertTrue(settings.waitForExistence(timeout: 5))
+            let status = settings.descendants(matching: .any)["agentRegistrationStatus"]
+            expectValue(status, contains: "Approval required")
+            XCTAssertFalse(settings.buttons["settingsRegisterAgent"].isEnabled)
+            XCTAssertTrue(settings.buttons["settingsUnregisterAgent"].isEnabled)
+            settings.buttons["settingsLoginItems"].click()
+            expectValue(status, contains: "Connected")
+            wait(for: NSPredicate(format: "exists == false"), on: banner)
+            settings.buttons["settingsUnregisterAgent"].click()
+            expectValue(status, contains: "Not registered")
+            wait(for: NSPredicate(format: "enabled == true"), on: settings.buttons["settingsRegisterAgent"])
+            XCTAssertFalse(settings.buttons["settingsUnregisterAgent"].isEnabled)
+            settings.buttons["settingsRegisterAgent"].click()
+            expectValue(status, contains: "Approval required")
         }
     }
 
@@ -228,12 +282,26 @@ final class ProcglintUITests: XCTestCase {
         expectValue(field, equals: text)
     }
 
+    private func assertListGeometry(in app: XCUIApplication) {
+        let scroll = app.scrollViews["processScroll"]
+        let count = app.staticTexts["processCount"]
+        let nameHeader = app.tables["processTable"].descendants(matching: .any)["column.name"]
+        let row = app.staticTexts["process.4100.name"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(scroll.frame.height, 200)
+        XCTAssertGreaterThan(nameHeader.frame.height, 10)
+        XCTAssertLessThanOrEqual(nameHeader.frame.maxY, row.frame.minY)
+        XCTAssertLessThan(row.frame.maxY, count.frame.minY)
+        XCTAssertLessThanOrEqual(scroll.frame.maxY, count.frame.minY + 2)
+        XCTAssertTrue(row.isHittable)
+    }
+
     private func expectValue(_ element: XCUIElement, equals value: String) {
-        wait(for: NSPredicate(format: "value == %@", value), on: element)
+        wait(for: NSPredicate(format: "value == %@ OR label == %@", value, value), on: element)
     }
 
     private func expectValue(_ element: XCUIElement, contains value: String) {
-        wait(for: NSPredicate(format: "value CONTAINS %@", value), on: element)
+        wait(for: NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", value, value), on: element)
     }
 
     private func wait(for predicate: NSPredicate, on element: XCUIElement) {

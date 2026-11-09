@@ -5,6 +5,22 @@ A lightweight process monitor for Apple Silicon Macs (macOS 15+). One per-user a
 - Contract: [docs/SPEC.md](docs/SPEC.md)
 - Plan: [docs/PLAN.md](docs/PLAN.md)
 
+## Screenshots
+
+The screenshots use isolated demonstration data, not a live process list.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/main-light.png">
+  <img src="docs/images/main-light.png" alt="procglint process monitor with system metric cards, a process table, and the selected process’s Launched by chain and synchronized history charts" width="1360">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/settings.png">
+  <img src="docs/images/settings.png" alt="procglint Settings with grouped General, Agent, Privacy, and History and sampling controls" width="760">
+</picture>
+
 ## Features
 
 - Process CPU, cumulative CPU time, Memory (footprint) and optional RSS, attributed disk I/O counters/rates, PID and owner; system CPU, memory pressure, swap usage and defined VM memory statistics.
@@ -32,7 +48,7 @@ This installs **Procglint.app** to `/Applications` and links `procglint` and `pr
 
 1. Download the app ZIP from [GitHub Releases](https://github.com/mkusaka/procglint/releases), unzip it and move **Procglint.app** to `/Applications` before registering the agent.
 2. Open the app and click **Register agent…** in the banner above the process table (also available in **Settings…**, ⌘,) to explicitly register its per-user agent (`io.github.mkusaka.procglint.agent`). The app never registers the agent automatically.
-3. If approval is required, click **Open Login Items…** and allow Procglint in **System Settings → General → Login Items & Extensions**. Return to the app to re-check; the banner disappears once registration is enabled and the agent responds. Use `procglint doctor` for registration state and recovery instructions.
+3. If approval is required, click **Open Login Items…** and allow Procglint in **System Settings → General → Login Items & Extensions**. Return to the app to re-check; the banner disappears once the agent responds. Use `procglint doctor` for registration state and recovery instructions.
 
 The registered agent starts on demand; the GUI need not remain open for MCP use. With no clients it exits after a 60-second grace period. If unavailable, clients report an error instead of starting another sampler.
 
@@ -46,7 +62,7 @@ The process table fills when the background agent is available. If it cannot be 
 
 Start with **Memory pressure: Normal / Warning / Critical** in the header. Its green/yellow/red badge also names the state, so colour is not the only signal. Warning or Critical means macOS is having more trouble meeting memory demand; high memory usage alone is not proof of trouble.
 
-The next line shows **Used … of … · Swap … · Compressed …** in memory-style GB/MB (1024-based, matching installed RAM capacities). Swap is memory stored on disk; compression saves RAM. A nonzero swap value can remain after pressure subsides, and compressed memory alone is not a fault. Wired memory is in the header tooltip rather than the main line. The system chart remains **Memory used / physical**, using the existing active + wired + compressor-page definition (not a reconstruction of Activity Monitor's Used total).
+The memory cards show **Used … of …**, **Swap …**, and **Compressed …** in memory-style GB/MB (1024-based, matching installed RAM capacities). Swap is memory stored on disk; compression saves RAM. A nonzero swap value can remain after pressure subsides, and compressed memory alone is not a fault. Wired memory is in the card tooltips rather than a separate card. The system chart remains **Memory used / physical**, using the existing active + wired + compressor-page definition (not a reconstruction of Activity Monitor's Used total).
 
 The default process **Memory** column is unchanged `ri_phys_footprint`, the same measure as Activity Monitor's Memory column: memory charged to that process, including compressed and swapped pages. Its header tooltip explains this. **RSS** remains optional; it counts shared pages and is usually misleading when comparing process memory costs. The inspector calls this **Memory (footprint)**. JSON/MCP still use `footprint_bytes`, and sorting/default columns have not changed. Unavailable pressure or swap is explicit, never Normal or zero.
 

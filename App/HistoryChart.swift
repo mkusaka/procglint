@@ -1,5 +1,12 @@
 import AppKit
-import ProcglintCore
+import Charts
+import Observation
+import struct ProcglintCore.HistoryGap
+import struct ProcglintCore.HistoryPoint
+import struct ProcglintCore.HistorySeries
+import enum ProcglintCore.MemoryPressure
+import struct ProcglintCore.Metric
+import SwiftUI
 
 struct ChartPoint: Equatable {
     var time: Date
@@ -8,19 +15,9 @@ struct ChartPoint: Equatable {
 }
 
 enum ChartGeometry {
-    static func fraction(_ value: Double, in range: ClosedRange<Double>) -> Double {
-        let clamped = min(range.upperBound, max(range.lowerBound, value))
-        return (clamped - range.lowerBound) / (range.upperBound - range.lowerBound)
-    }
-
-    static func x(for time: Date, in range: ClosedRange<Date>, plot: CGRect) -> Double {
-        let duration = range.upperBound.timeIntervalSince(range.lowerBound)
-        return plot.minX + time.timeIntervalSince(range.lowerBound) / (duration > 0 ? duration : 1) * plot.width
-    }
-
-    static func time(atX x: Double, in range: ClosedRange<Date>, plot: CGRect) -> Date {
-        let fraction = plot.width > 0 ? min(1, max(0, (x - plot.minX) / plot.width)) : 0
-        return range.lowerBound.addingTimeInterval(fraction * range.upperBound.timeIntervalSince(range.lowerBound))
+    static func historyWindow(endingAt time: Date?, minutes: Int) -> ClosedRange<Date> {
+        let end = time ?? Date(timeIntervalSince1970: 0)
+        return end.addingTimeInterval(-Double(minutes * 60)) ... end
     }
 
     static func timeRange(_ series: HistorySeries) -> ClosedRange<Date>? {
@@ -70,7 +67,7 @@ enum ChartGeometry {
             var current: [ChartPoint] = []
             for point in segment {
                 if let previous = current.last, previous.pressure != point.pressure {
-                    // Split halfway between samples so each sample retains its recorded categorical colour.
+                    // Each recorded sample retains its categorical colour; transitions meet halfway.
                     var boundary = ChartPoint(time: previous.time.addingTimeInterval(point.time.timeIntervalSince(previous.time) / 2),
                                               value: (previous.value + point.value) / 2, pressure: previous.pressure)
                     current.append(boundary)
@@ -85,6 +82,37 @@ enum ChartGeometry {
         return result
     }
 
+    static func memorySegments(_ samples: [MemorySummaryPoint], gaps: [HistoryGap] = [], value: (MemorySummaryPoint) -> Metric) -> [[ChartPoint]] {
+        var result: [[ChartPoint]] = []
+        var current: [ChartPoint] = []
+        for sample in samples {
+            let metric = value(sample)
+            let insideGap = gaps.contains { $0.from <= sample.time && sample.time < $0.to }
+            let crossesGap = current.last.map { previous in gaps.contains { $0.from < sample.time && $0.to > previous.time } } ?? false
+            if sample.startsSegment || metric.value == nil || insideGap || crossesGap, !current.isEmpty {
+                result.append(current); current = []
+            }
+            if !insideGap, let number = metric.value, number.isFinite {
+                current.append(ChartPoint(time: sample.time, value: number))
+            }
+        }
+        if !current.isEmpty {
+            result.append(current)
+        }
+        return result
+    }
+
+    static func nearestMemoryPoint(in samples: [MemorySummaryPoint], to time: Date, gaps: [HistoryGap] = []) -> MemorySummaryPoint? {
+        guard let first = samples.first, let last = samples.last, (first.time ... last.time).contains(time),
+              !gaps.contains(where: { $0.from <= time && time < $0.to }),
+              !zip(samples, samples.dropFirst()).contains(where: { previous, next in
+                  next.startsSegment && previous.time < time && time < next.time
+              }) else { return nil }
+        return samples.filter { sample in
+            !gaps.contains { $0.from <= sample.time && sample.time < $0.to }
+        }.min { abs($0.time.timeIntervalSince(time)) < abs($1.time.timeIntervalSince(time)) }
+    }
+
     static func pressureColor(_ pressure: MemoryPressure?) -> NSColor {
         switch pressure {
         case .normal: .systemGreen
@@ -96,209 +124,274 @@ enum ChartGeometry {
 }
 
 @MainActor
-final class ChartCursor {
-    private let charts = NSHashTable<HistoryChartView>.weakObjects()
+@Observable
+final class ChartSelection {
     private(set) var time: Date?
-    private(set) weak var hoveredChart: HistoryChartView?
+    private(set) var hoveredChart: HistoryChartKind?
 
-    func add(_ chart: HistoryChartView) {
-        charts.add(chart)
-    }
-
-    func remove(_ chart: HistoryChartView) {
-        clear(from: chart)
-        charts.remove(chart)
-    }
-
-    func move(to time: Date, from chart: HistoryChartView) {
+    func move(to time: Date, from chart: HistoryChartKind) {
         self.time = time
         hoveredChart = chart
-        charts.allObjects.forEach { $0.cursorChanged() }
     }
 
-    func clear(from chart: HistoryChartView) {
-        guard hoveredChart === chart else { return }
+    func updateSelection(_ time: Date?, from chart: HistoryChartKind) {
+        // Charts with a shorter domain must not clamp or clear another chart's cursor.
+        guard hoveredChart == chart, let time else { return }
+        self.time = time
+    }
+
+    func clear(from chart: HistoryChartKind? = nil) {
+        guard chart == nil || hoveredChart == chart else { return }
         time = nil
         hoveredChart = nil
-        charts.allObjects.forEach { $0.cursorChanged() }
+    }
+}
+
+enum HistoryChartKind: String, CaseIterable {
+    case systemCPU, systemMemory, pressure, swap, compressed, cpu, memory, io
+
+    var identifier: String {
+        switch self {
+        case .systemCPU: "systemCPUChart"
+        case .systemMemory: "systemMemoryChart"
+        case .pressure: "systemPressureChart"
+        case .swap: "systemSwapChart"
+        case .compressed: "systemCompressedChart"
+        case .cpu: "processCPUChart"
+        case .memory: "processMemoryChart"
+        case .io: "processIOChart"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .systemCPU: "System CPU history, percent"
+        case .systemMemory: "System memory used history, bytes"
+        case .pressure: "Memory pressure history, percent"
+        case .swap: "Swap history, bytes; since this window opened"
+        case .compressed: "Compressed memory history, bytes; since this window opened"
+        case .cpu: "CPU history, percent (one core = 100%)"
+        case .memory: "Memory (footprint) history, bytes"
+        case .io: "I/O history, bytes per second"
+        }
+    }
+
+    var fields: [(HistoryPoint) -> Metric?] {
+        switch self {
+        case .systemCPU, .cpu: [{ $0.cpuPercent }]
+        case .systemMemory: [{ $0.memoryUsedBytes }]
+        case .pressure: [{ $0.memoryPressurePercent }]
+        case .memory: [{ $0.footprintBytes }]
+        case .io: [{ $0.diskReadBps }, { $0.diskWriteBps }]
+        case .swap, .compressed: []
+        }
+    }
+
+    func format(_ value: Double) -> String {
+        switch self {
+        case .systemCPU, .cpu: Display.percent(value)
+        case .pressure: String(format: "%.0f%%", value)
+        case .io: Display.bytes(value) + "/s"
+        default: Display.bytes(value)
+        }
+    }
+
+    func values(at point: HistoryPoint?) -> String {
+        fields.enumerated().map { index, field in
+            let prefix = self == .io ? (index == 0 ? "Read: " : "Write: ") : ""
+            guard let point, let metric = field(point) else { return prefix + "No history" }
+            return prefix + metricText(metric)
+        }.joined(separator: ", ")
+    }
+
+    func metricText(_ metric: Metric) -> String {
+        let text = Display.metric(metric, format: format)
+        return text.text + (text.reason.map { " (\($0))" } ?? "")
+    }
+
+    func hoverReadout(series: HistorySeries?, time: Date?, hovered: Bool) -> String? {
+        guard let time, let series, let point = ChartGeometry.nearestPoint(in: series, to: time) else { return nil }
+        let values = values(at: point)
+        return hovered ? time.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits)) + " · " + values : values
     }
 }
 
 @MainActor
-final class HistoryChartView: NSView {
-    private var series: HistorySeries?
-    private(set) var fixedYRange: ClosedRange<Double>?
-    private let fields: [(HistoryPoint) -> Metric?]
-    private let label: String
-    private let format: (Double) -> String
-    private let compact: Bool
-    private let pressureArea: Bool
-    private let fieldLabels: [String]
-    private let colors: [NSColor] = [.systemBlue, .systemOrange]
-    private var tracking: NSTrackingArea?
-    weak var cursor: ChartCursor? {
-        didSet {
-            oldValue?.remove(self)
-            cursor?.add(self)
-            cursorChanged()
+struct HistoryChart: View {
+    let model: MonitorViewModel
+    let kind: HistoryChartKind
+    var compact = false
+
+    var fixedMaximum: Double? {
+        if kind == .systemCPU || kind == .pressure {
+            return 100
+        }
+        return kind == .systemMemory ? model.header.map { Double($0.system.physicalMemoryBytes) } : nil
+    }
+
+    var hasTrend: Bool {
+        guard kind == .swap || kind == .compressed else { return true }
+        return ChartGeometry.memorySegments(model.memorySummaryHistory, gaps: model.systemHistory?.gaps ?? [],
+                                            value: { kind == .swap ? $0.swap : $0.compressed }).contains { $0.count > 1 }
+    }
+
+    var body: some View {
+        let system = [.systemCPU, .systemMemory, .pressure, .swap, .compressed].contains(kind)
+        let series = system ? model.systemHistory : model.history
+        let memoryPoints = kind == .swap || kind == .compressed ? model.memorySummaryHistory : []
+        if hasTrend {
+            HistoryPlot(kind: kind, series: series, memoryPoints: memoryPoints, maximum: fixedMaximum,
+                        timeRange: ChartGeometry.historyWindow(endingAt: model.header?.sampledAt ?? series?.points.last?.t, minutes: model.policy.historyMinutes),
+                        compact: compact, selection: model.chartSelection)
+        } else {
+            Color.clear.frame(height: compact ? 38 : 78).accessibilityHidden(true)
         }
     }
+}
 
-    init(label: String, fields: [(HistoryPoint) -> Metric?], compact: Bool = false, pressureArea: Bool = false,
-         fieldLabels: [String] = [], format: @escaping (Double) -> String = { String(format: "%.1f", $0) })
-    {
-        self.fields = fields
-        self.label = label
-        self.format = format
-        self.compact = compact
-        self.pressureArea = pressureArea
-        self.fieldLabels = fieldLabels
-        super.init(frame: .zero)
-        setAccessibilityElement(true)
-        setAccessibilityLabel(label + ": No history")
-        setAccessibilityRole(.image)
-        heightAnchor.constraint(equalToConstant: compact ? 36 : 80).isActive = true
-    }
+private struct PlotSegment: Identifiable {
+    var id: Int
+    var label: String
+    var points: [ChartPoint]
+}
 
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) {
-        fatalError("Programmatic UI only")
-    }
+@MainActor
+private struct HistoryPlot: View {
+    let kind: HistoryChartKind
+    let series: HistorySeries?
+    let memoryPoints: [MemorySummaryPoint]
+    let compact: Bool
+    let selection: ChartSelection
+    let segments: [PlotSegment]
+    let maximum: Double
+    let timeRange: ClosedRange<Date>
 
-    private var plot: CGRect {
-        bounds.insetBy(dx: compact ? 2 : 4, dy: compact ? 2 : 4)
-    }
-
-    private var timeRange: ClosedRange<Date>? {
-        series.flatMap(ChartGeometry.timeRange)
-    }
-
-    private func values(at point: HistoryPoint?) -> [String] {
-        fields.map { field in
-            guard let point, let metric = field(point) else { return "No history" }
-            let value = Display.metric(metric, format: format)
-            return value.reason.map { "\(value.text) (\($0))" } ?? value.text
-        }
-    }
-
-    var hoverReadout: String? {
-        guard let time = cursor?.time, let series,
-              let point = ChartGeometry.nearestPoint(in: series, to: time) else { return nil }
-        let values = values(at: point).enumerated().map { index, value in
-            fieldLabels.indices.contains(index) ? "\(fieldLabels[index]): \(value)" : value
-        }.joined(separator: ", ")
-        guard cursor?.hoveredChart === self else { return values }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "HH:mm:ss"
-        return "\(formatter.string(from: time)) · \(values)"
-    }
-
-    func cursorChanged() {
-        // Keep AXValue as the latest sample; AXTitle exposes the transient, synchronised read-out.
-        setAccessibilityTitle(hoverReadout.map { "Cursor: " + $0 })
-        needsDisplay = true
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking {
-            removeTrackingArea(tracking)
-        }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self)
-        addTrackingArea(area)
-        tracking = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        mouseMoved(with: event)
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        guard let timeRange else { cursor?.clear(from: self); return }
-        let x = convert(event.locationInWindow, from: nil).x
-        cursor?.move(to: ChartGeometry.time(atX: x, in: timeRange, plot: plot), from: self)
-    }
-
-    override func mouseExited(with _: NSEvent) {
-        cursor?.clear(from: self)
-    }
-
-    override func viewWillMove(toWindow newWindow: NSWindow?) {
-        if newWindow == nil {
-            cursor?.clear(from: self)
-        }
-        super.viewWillMove(toWindow: newWindow)
-    }
-
-    func update(_ series: HistorySeries?, fixedYRange: ClosedRange<Double>? = nil) {
-        if let range = fixedYRange {
-            precondition(range.lowerBound.isFinite && range.upperBound.isFinite && range.upperBound > range.lowerBound)
-        }
-        guard self.series != series || self.fixedYRange != fixedYRange else { return }
+    init(kind: HistoryChartKind, series: HistorySeries?, memoryPoints: [MemorySummaryPoint], maximum: Double?, timeRange: ClosedRange<Date>, compact: Bool, selection: ChartSelection) {
+        self.kind = kind
         self.series = series
-        self.fixedYRange = fixedYRange
-        let latest = values(at: series?.points.last).joined(separator: ", ")
-        setAccessibilityValue(latest)
-        setAccessibilityLabel(label + ": " + latest)
-        cursorChanged()
+        self.memoryPoints = memoryPoints
+        self.compact = compact
+        self.selection = selection
+        var groups: [PlotSegment] = []
+        if kind == .swap || kind == .compressed {
+            let lines = ChartGeometry.memorySegments(memoryPoints, gaps: series?.gaps ?? [], value: { kind == .swap ? $0.swap : $0.compressed })
+            groups = lines.enumerated().map { PlotSegment(id: $0.offset, label: kind.label, points: $0.element) }
+        } else if let series {
+            for (index, field) in kind.fields.enumerated() {
+                let lines = kind == .pressure ? ChartGeometry.pressureSegments(series) : ChartGeometry.segments(series, value: field)
+                for line in lines {
+                    groups.append(PlotSegment(id: groups.count, label: kind == .io ? (index == 0 ? "Read" : "Write") : kind.label, points: line))
+                }
+            }
+        }
+        segments = groups
+        self.maximum = max(1, maximum ?? groups.flatMap(\.points).map(\.value).max() ?? 1)
+        self.timeRange = timeRange
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        NSColor.controlBackgroundColor.setFill()
-        bounds.fill()
-        guard let series, let timeRange else { return }
-        let lines = pressureArea ? [ChartGeometry.pressureSegments(series)] : fields.map { ChartGeometry.segments(series, value: $0) }
-        let maximum = max(1, lines.flatMap(\.self).flatMap(\.self).map(\.value).max() ?? 1)
-        let range = fixedYRange ?? 0 ... maximum
-        for (index, segments) in lines.enumerated() {
-            for segment in segments {
-                let color = pressureArea ? ChartGeometry.pressureColor(segment.first?.pressure) : colors[index % colors.count]
-                color.setStroke()
-                color.setFill()
-                let positions = segment.map { point in
-                    NSPoint(x: ChartGeometry.x(for: point.time, in: timeRange, plot: plot),
-                            y: plot.minY + ChartGeometry.fraction(point.value, in: range) * plot.height)
+    private var latest: String {
+        if kind == .swap || kind == .compressed {
+            guard let last = memoryPoints.last else { return "No history" }
+            return kind.metricText(kind == .swap ? last.swap : last.compressed)
+        }
+        return kind.values(at: series?.points.last)
+    }
+
+    private var readout: String? {
+        let hovered = selection.hoveredChart == kind
+        if kind == .swap || kind == .compressed {
+            guard let time = selection.time, let point = ChartGeometry.nearestMemoryPoint(in: memoryPoints, to: time, gaps: series?.gaps ?? []) else { return nil }
+            let value = kind.metricText(kind == .swap ? point.swap : point.compressed)
+            return hovered ? time.formatted(date: .omitted, time: .standard) + " · " + value : value
+        }
+        return kind.hoverReadout(series: series, time: selection.time, hovered: hovered)
+    }
+
+    private var selectionBinding: Binding<Date?> {
+        Binding(get: { selection.time }, set: { selection.updateSelection($0, from: kind) })
+    }
+
+    @ChartContentBuilder
+    private func marks(for point: ChartPoint, in segment: PlotSegment) -> some ChartContent {
+        if kind == .pressure {
+            let color = Color(nsColor: ChartGeometry.pressureColor(point.pressure))
+            AreaMark(x: .value("Time", point.time), y: .value("Pressure", point.value), series: .value("Segment", segment.id), stacking: .unstacked)
+                .foregroundStyle(color.opacity(0.18))
+            LineMark(x: .value("Time", point.time), y: .value("Pressure", point.value), series: .value("Segment", segment.id))
+                .foregroundStyle(color)
+                .lineStyle(StrokeStyle(lineWidth: 1.5))
+        } else {
+            if !compact, kind != .io {
+                AreaMark(x: .value("Time", point.time), y: .value("Value", point.value), series: .value("Segment", segment.id), stacking: .unstacked)
+                    .foregroundStyle(.blue.opacity(0.1))
+            }
+            LineMark(x: .value("Time", point.time), y: .value("Value", point.value), series: .value("Segment", segment.id))
+                .foregroundStyle(by: .value("Series", segment.label))
+                .lineStyle(StrokeStyle(lineWidth: 1.5))
+        }
+        if !compact, segment.points.count == 1 {
+            let color: Color = switch kind {
+            case .pressure: Color(nsColor: ChartGeometry.pressureColor(point.pressure))
+            case .io: segment.label == "Write" ? .orange : .blue
+            default: .blue
+            }
+            PointMark(x: .value("Time", point.time), y: .value("Value", point.value))
+                .foregroundStyle(color)
+                .symbolSize(10)
+        }
+    }
+
+    var body: some View {
+        Chart {
+            ForEach(segments) { segment in
+                ForEach(Array(segment.points.enumerated()), id: \.offset) { _, point in
+                    marks(for: point, in: segment)
                 }
-                guard let first = positions.first, let last = positions.last else { continue }
-                let path = NSBezierPath()
-                path.move(to: first)
-                for position in positions.dropFirst() {
-                    path.line(to: position)
-                }
-                if pressureArea {
-                    let area = NSBezierPath()
-                    area.move(to: NSPoint(x: first.x, y: plot.minY))
-                    for position in positions {
-                        area.line(to: position)
+            }
+            if let time = selection.time, timeRange.contains(time) {
+                RuleMark(x: .value("Selected time", time))
+                    .foregroundStyle(Color.secondary)
+                    .annotation(position: .overlay, alignment: .topLeading, spacing: 0,
+                                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart)))
+                    {
+                        if let readout {
+                            Text(readout)
+                                .font(.system(size: 10).monospacedDigit())
+                                .foregroundStyle(Color.primary)
+                                .fixedSize()
+                                .padding(3)
+                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4))
+                        }
                     }
-                    area.line(to: NSPoint(x: last.x, y: plot.minY))
-                    area.close()
-                    area.fill()
-                }
-                if positions.count == 1 {
-                    NSBezierPath(ovalIn: NSRect(x: first.x - 2, y: first.y - 2, width: 4, height: 4)).fill()
-                }
-                path.lineWidth = 1.5
-                path.stroke()
             }
         }
-        if let time = cursor?.time, timeRange.contains(time) {
-            let x = ChartGeometry.x(for: time, in: timeRange, plot: plot)
-            NSColor.labelColor.setStroke()
-            let line = NSBezierPath()
-            line.move(to: NSPoint(x: x, y: plot.minY))
-            line.line(to: NSPoint(x: x, y: plot.maxY))
-            line.lineWidth = 1
-            line.stroke()
-            if let hoverReadout {
-                let text = NSAttributedString(string: hoverReadout, attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
-                    .foregroundColor: NSColor.labelColor, .backgroundColor: NSColor.controlBackgroundColor,
-                ])
-                text.draw(in: NSRect(x: plot.minX + 2, y: plot.maxY - 28, width: plot.width - 4, height: 28))
+        .chartXScale(domain: timeRange, range: .plotDimension(padding: 0))
+        .chartYScale(domain: 0 ... maximum, range: .plotDimension(padding: 2))
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartForegroundStyleScale(domain: kind == .io ? ["Read", "Write"] : [kind.label], range: [.blue, .orange])
+        .chartLegend(kind == .io ? .visible : .hidden)
+        .chartXSelection(value: selectionBinding)
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                ChartHoverArea { location in
+                    guard let location, let frame = proxy.plotFrame else { selection.clear(from: kind); return }
+                    let x = location.x - geometry[frame].minX
+                    if let time: Date = proxy.value(atX: x), timeRange.contains(time) {
+                        selection.move(to: time, from: kind)
+                    } else {
+                        selection.clear(from: kind)
+                    }
+                }
+                .accessibilityHidden(true)
             }
         }
+        .frame(height: compact ? 38 : 78)
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isImage)
+        .accessibilityIdentifier(kind.identifier)
+        .accessibilityLabel(kind.label + (readout.map { "; Cursor: " + $0 } ?? ""))
+        .accessibilityValue(latest)
+        .onDisappear { selection.clear(from: kind) }
     }
 }

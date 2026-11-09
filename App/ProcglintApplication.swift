@@ -26,7 +26,7 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
     {
         self.bundle = bundle
         let arguments = ProcessInfo.processInfo.arguments
-        let fixture = try arguments.contains("--ui-testing") ? UITestingFixture(unregistered: arguments.contains("--ui-testing-unregistered")) : nil
+        let fixture = try arguments.contains("--ui-testing") ? UITestingFixture(unregistered: arguments.contains("--ui-testing-unregistered"), requiresApproval: arguments.contains("--ui-testing-requires-approval")) : nil
         uiTestingFixture = fixture
         let status: @MainActor () -> String
         let register: @MainActor () throws -> Void
@@ -39,10 +39,11 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
             registration = agentStatus
         } else {
             self.unregisterAgent = { fixture?.agentRegistered = false }
-            self.openLoginItems = {}
-            status = { fixture?.agentRegistered == true ? "Enabled (UI fixture)" : "Not registered (UI fixture)" }
-            register = { fixture?.agentRegistered = true }
-            registration = { fixture?.agentRegistered == true ? .enabled : .notRegistered }
+            // The fixture simulates returning from Login Items after approval; it never opens System Settings.
+            self.openLoginItems = { fixture?.agentRegistrationStatus = .enabled }
+            status = { AgentSetup(status: fixture?.agentRegistrationStatus ?? .notRegistered, reachable: fixture?.agentRegistered == true).title }
+            register = { fixture?.registerAgent() }
+            registration = { fixture?.agentRegistrationStatus ?? .notRegistered }
         }
         let preferences = try fixture?.preferences() ?? AppPreferences()
         let monitor: any MonitorService = fixture.map { $0 as any MonitorService } ?? service
@@ -52,9 +53,12 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
             service: monitor, preferences: preferences,
             helperURL: MCPConfiguration.helperURL(in: bundle),
             registrationStatus: status, registerAgent: register,
-            loginItem: fixture?.loginItem ?? .mainApp
+            loginItem: fixture?.loginItem ?? .mainApp, agentStatus: registration
         )
         super.init()
+        if fixture != nil, let search = ProcessInfo.processInfo.environment["PROCGLINT_UI_TEST_SEARCH"] {
+            model.setSearch(search)
+        }
         model.onChange = { [weak self] in self?.render() }
         settingsModel.onPolicyChanged = { [weak self] policy in
             guard let self else { return }
@@ -77,13 +81,27 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
         buildMenu()
         let main = MainWindowController(model: model, register: { [weak self] in
             Task { await self?.settingsModel.register() }
-        }, openLoginItems: openLoginItems)
+        }, openLoginItems: openLoginItems, registrationError: { [weak self] in self?.settingsModel.registrationError ?? "" })
         mainWindow = main
+        if uiTestingFixture != nil, let appearance = ProcessInfo.processInfo.environment["PROCGLINT_UI_TEST_APPEARANCE"] {
+            NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
+        }
+        if uiTestingFixture != nil, ProcessInfo.processInfo.arguments.contains("--ui-testing-selected") {
+            main.window?.setContentSize(NSSize(width: 1360, height: 1100))
+            main.window?.center()
+        }
+        if uiTestingFixture != nil, let search = ProcessInfo.processInfo.environment["PROCGLINT_UI_TEST_SEARCH"] {
+            model.setSearch(search)
+            main.search.stringValue = search
+        }
         main.visibilityChanged = { [weak self] in self?.updateVisibility() }
         main.focusChanged = { [weak self] in self?.updateFocus() }
         syncMenuBar()
         render()
         openMainWindow()
+        if uiTestingFixture != nil, ProcessInfo.processInfo.arguments.contains("--ui-testing-settings") {
+            openSettings()
+        }
     }
 
     public func applicationWillTerminate(_: Notification) {
@@ -103,7 +121,12 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
         updateFocus()
         render()
         settingsWindow?.render()
-        Task { await model.tick() }
+        Task {
+            await model.tick()
+            if settingsWindow?.window?.isVisible == true {
+                await settingsModel.refresh()
+            }
+        }
     }
 
     public func applicationDidResignActive(_: Notification) {
@@ -229,6 +252,17 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
     }
 
     private func render() {
+        if uiTestingFixture != nil, ProcessInfo.processInfo.arguments.contains("--ui-testing-selected"), model.selectedKey == nil,
+           let process = model.rows.first(where: { $0.pid == 4100 })
+        {
+            model.select(process.processKey)
+            Task { await model.refreshInspector() }
+        }
+        if uiTestingFixture != nil, ProcessInfo.processInfo.arguments.contains("--ui-testing-selected"),
+           model.history != nil, model.chartSelection.time == nil, let time = model.header?.sampledAt
+        {
+            model.chartSelection.move(to: time.addingTimeInterval(-100), from: .systemCPU)
+        }
         mainWindow?.render()
         statusText?.title = model.header?.status.rawValue ?? "unavailable"
         if let header = model.header, header.status != .unavailable {

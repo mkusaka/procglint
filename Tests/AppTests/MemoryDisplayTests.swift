@@ -51,20 +51,22 @@ struct MemoryDisplayTests {
         model.apply(ProcessPage(snapshot: service.current.header, items: [], totalMatched: 0))
         let controller = MainWindowController(model: model)
         controller.render()
-        #expect(controller.summary.stringValue.hasPrefix("Memory pressure: \(pressure.rawValue.capitalized) · 39%"))
+        #expect(SummaryCard.pressure.value(model.header) == "39%")
+        #expect(SummaryCard.pressure.caption(model.header) == pressure.rawValue.capitalized)
         let color: NSColor = switch pressure {
         case .normal: .systemGreen
         case .warning: .systemYellow
         case .critical: .systemRed
         }
-        #expect(controller.summary.attributedStringValue.attribute(.backgroundColor, at: 0, effectiveRange: nil) as? NSColor == color.withAlphaComponent(0.2))
-        #expect(controller.summary.toolTip?.contains("Wired:") == true)
+        #expect(ChartGeometry.pressureColor(pressure) == color)
+        #expect(Display.summaryTooltip(model.header).contains("Wired:"))
         let column = try #require(controller.table.tableColumns.first { $0.identifier.rawValue == "footprint" })
         #expect(column.title == "Memory")
         #expect(column.headerToolTip == ProcessColumn.footprint.tooltip)
         #expect(column.headerCell.accessibilityHelp()?.contains("including compressed and swapped pages") == true)
         #expect(!column.isHidden)
         #expect(controller.table.sortDescriptors.first?.key == "cpu")
-        #expect(controller.memoryChart.accessibilityLabel()?.contains("Memory (footprint)") == true)
+        #expect(HistoryChartKind.memory.label.contains("Memory (footprint)"))
+        controller.window?.close()
     }
 }

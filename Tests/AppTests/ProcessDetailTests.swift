@@ -25,26 +25,20 @@ struct InspectorProcessDetailTests {
         await model.refreshInspector()
         let controller = MainWindowController(model: model)
         controller.render()
-        #expect(controller.launchedBy.stringValue == "Launched by")
-        #expect(controller.commandLine.stringValue == "Command lines hidden — enable in Settings")
-        #expect(controller.cwd.stringValue.isEmpty)
+        #expect(model.commandLineText == "Command lines hidden — enable in Settings")
+        #expect(model.cwdText.isEmpty)
         #expect(model.detail?.commandLine == nil)
-        let groups = controller.lineage.arrangedSubviews.compactMap { $0 as? NSStackView }
-        let buttons = groups.compactMap { $0.arrangedSubviews.first as? NSButton }
-        #expect(buttons.map(\.title) == ["launchd (1)", "zsh (43)"])
-        #expect(!buttons[0].isEnabled && buttons[1].isEnabled)
-        #expect(controller.lineageStatus.stringValue == "Direct children: 3 · Parent chain incomplete")
+        #expect(model.rootAncestors.map { "\($0.name) (\($0.pid))" } == ["launchd (1)", "zsh (43)"])
+        #expect(!model.canSelectAncestor(model.rootAncestors[0]) && model.canSelectAncestor(model.rootAncestors[1]))
+        #expect(model.lineageStatusText == "Direct children: 3 · Parent chain incomplete")
 
         try prefs.store.setAllowedPermissions([.includeCommandLines])
         model.permissionsChanged()
         await model.selectionUpdate?.value
         controller.render()
-        #expect(controller.commandLine.stringValue == "Command: node server.js --token <redacted>")
-        #expect(controller.commandLine.isSelectable)
-        #expect(controller.cwd.stringValue == "Working directory: /private/project")
-        #expect(controller.cwd.isSelectable)
-        let commands = controller.lineage.arrangedSubviews.compactMap { $0 as? NSStackView }.flatMap(\.arrangedSubviews).compactMap { $0 as? NSTextField }
-        #expect(commands.map(\.stringValue) == ["zsh --auth=<redacted>"])
+        #expect(model.commandLineText == "Command: node server.js --token <redacted>")
+        #expect(model.cwdText == "Working directory: /private/project")
+        #expect(model.rootAncestors.compactMap { $0.commandLine?.displayText } == ["zsh --auth=<redacted>"])
         // Paging within an unchanged snapshot must not discard the lazy detail.
         model.apply(ProcessPage(snapshot: service.current.header, items: [], totalMatched: 2), append: true)
         #expect(model.detail?.commandLine != nil)
@@ -55,9 +49,11 @@ struct InspectorProcessDetailTests {
         #expect(model.detail?.ancestors?.allSatisfy { $0.commandLine == nil } == true)
         await model.selectionUpdate?.value
         controller.render()
-        let parentButton = try #require((controller.lineage.arrangedSubviews.last as? NSStackView)?.arrangedSubviews.first as? NSButton)
-        parentButton.performClick(nil)
+        await model.selectAncestor(model.rootAncestors[1])
+        controller.render()
         #expect(model.selectedKey == parent.processKey)
+        #expect(controller.table.selectedRow == 1)
+        controller.window?.close()
         await model.selectionUpdate?.value
         await model.refreshInspector()
     }

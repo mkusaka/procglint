@@ -166,7 +166,9 @@ func preferences() -> AppPreferences {
     let prefs = preferences()
     defer { prefs.defaults.removePersistentDomain(forName: prefs.store.suiteName ?? "") }
     let service = try FakeMonitorService()
-    let model = try MonitorViewModel(service: service, preferences: prefs)
+    let clock = FakeClock()
+    service.clock = clock
+    let model = try MonitorViewModel(service: service, preferences: prefs, clock: clock)
     await model.setVisibility(window: true, menuBar: true)
     service.current = snapshot(instance: "agent-b")
     await model.tick()

@@ -104,11 +104,11 @@ func adaptiveRefreshUsesNextIntervalAfterDebounce(_ interval: SamplingInterval, 
     defer { controller.window?.close() }
     var changes = 0
     controller.adaptiveRefreshChanged = { changes += 1 }
-    #expect(controller.adaptiveRefresh.state == .on)
-    controller.adaptiveRefresh.performClick(nil)
+    #expect(model.preferences.adaptiveRefresh)
+    controller.setAdaptiveRefresh(false)
     #expect(!prefs.adaptiveRefresh)
     #expect(changes == 1)
-    controller.adaptiveRefresh.performClick(nil)
+    controller.setAdaptiveRefresh(true)
     #expect(prefs.adaptiveRefresh)
     #expect(changes == 2)
 }

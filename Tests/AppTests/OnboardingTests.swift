@@ -32,8 +32,8 @@ private final class RegistrationSpy {
     for state in [AgentRegistration.Status.notRegistered, .notFound, .requiresApproval, .enabled] {
         spy.status = state
         controller.render()
-        #expect(model.showsAgentBanner == (state != .enabled))
-        #expect(controller.agentBanner.isHidden == (state == .enabled))
+        #expect(!model.showsAgentBanner)
+        #expect(controller.agentBanner.isHidden)
         #expect(controller.loginItems.isHidden == (state != .requiresApproval))
     }
     #expect(spy.registrations == 0)
@@ -43,8 +43,14 @@ private final class RegistrationSpy {
     #expect(!controller.agentBanner.isHidden)
     #expect(controller.table.isHidden)
     #expect(model.rows.count == 1) // A connection failure must not invent process exits.
+    #expect(controller.registerAgent.title == "Retry connection")
+    controller.registerAgent.performClick(nil)
+    #expect(spy.registrations == 0)
+    spy.status = .notRegistered
+    controller.render()
     controller.registerAgent.performClick(nil)
     #expect(spy.registrations == 1)
+    spy.status = .enabled
     service.snapshotError = nil
     await model.tick()
     controller.render()
@@ -135,20 +141,20 @@ private final class RegistrationSpy {
                                          registrationStatus: { "Enabled" }, registerAgent: {}, loginItem: loginItem)
     let controller = SettingsWindowController(model: settings, unregisterAgent: {}, openLoginItems: {})
     defer { controller.window?.close() }
-    #expect(controller.launchAtLogin.state == .on)
-    #expect(!controller.loginItemHint.isHidden)
-    #expect(!controller.loginItemApproval.isHidden)
+    #expect(settings.opensAtLogin)
+    #expect(!settings.loginItemHint.isEmpty)
+    #expect(settings.loginItem.status() == .requiresApproval)
     let removal = Task { await settings.setOpensAtLogin(false) }
     await gate.waitUntilEntered()
-    #expect(!controller.launchAtLogin.isEnabled)
+    #expect(settings.changingLoginItem)
     await settings.setOpensAtLogin(true)
     #expect(spy.registrations == 0)
     gate.resume()
     await removal.value
-    #expect(controller.launchAtLogin.isEnabled)
-    #expect(controller.launchAtLogin.state == .off)
-    #expect(controller.loginItemHint.isHidden)
-    #expect(controller.loginItemApproval.isHidden)
+    #expect(!settings.changingLoginItem)
+    #expect(!settings.opensAtLogin)
+    #expect(settings.loginItemHint.isEmpty)
+    #expect(settings.loginItem.status() != .requiresApproval)
 }
 
 @MainActor

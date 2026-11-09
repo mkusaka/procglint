@@ -7,22 +7,6 @@ private func date(_ seconds: Double) -> Date {
     Date(timeIntervalSince1970: seconds)
 }
 
-@Test func chartTimeMappingRoundTripsAndClampsMousePositions() {
-    let plot = CGRect(x: 4, y: 2, width: 160, height: 36)
-    for range in [date(10) ... date(30), date(10) ... date(10.5)] {
-        let middle = range.lowerBound.addingTimeInterval(range.upperBound.timeIntervalSince(range.lowerBound) / 2)
-        #expect(ChartGeometry.x(for: range.lowerBound, in: range, plot: plot) == 4)
-        #expect(ChartGeometry.x(for: middle, in: range, plot: plot) == 84)
-        #expect(ChartGeometry.x(for: range.upperBound, in: range, plot: plot) == 164)
-        #expect(ChartGeometry.time(atX: 84, in: range, plot: plot) == middle)
-        #expect(ChartGeometry.time(atX: -100, in: range, plot: plot) == range.lowerBound)
-        #expect(ChartGeometry.time(atX: 200, in: range, plot: plot) == range.upperBound)
-    }
-    #expect(ChartGeometry.time(atX: 84, in: date(10) ... date(10), plot: plot) == date(10))
-    #expect(ChartGeometry.x(for: date(10), in: date(10) ... date(10), plot: plot) == 4)
-    #expect(ChartGeometry.time(atX: 84, in: date(10) ... date(30), plot: .zero) == date(10))
-}
-
 @Test func nearestPointHandlesEmptySingleIrregularAndGappedHistory() {
     var series = HistorySeries(series: "system", points: [])
     #expect(ChartGeometry.nearestPoint(in: series, to: date(10)) == nil)
@@ -40,6 +24,30 @@ private func date(_ seconds: Double) -> Date {
     #expect(ChartGeometry.nearestPoint(in: series, to: date(30))?.t == date(40))
     series.points = [series.points[2]]
     #expect(ChartGeometry.nearestPoint(in: series, to: date(10))?.t == date(10))
+}
+
+@MainActor
+@Test func nativeHoverTrackingForHostedChartsReportsMovesAndClears() throws {
+    _ = NSApplication.shared
+    var locations: [CGPoint?] = []
+    let view = ChartTrackingView { locations.append($0) }
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 50), styleMask: [.titled], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = view
+    defer { window.close() }
+    view.frame = NSRect(x: 0, y: 0, width: 200, height: 50)
+    view.updateTrackingAreas()
+    view.updateTrackingAreas()
+    #expect(view.trackingAreas.count == 1)
+    #expect(view.hitTest(.zero) == nil)
+    let event = try #require(NSEvent.mouseEvent(with: .mouseMoved, location: NSPoint(x: 100, y: 25), modifierFlags: [], timestamp: 0,
+                                                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+    view.mouseEntered(with: event)
+    #expect(locations == [CGPoint(x: 100, y: 25)])
+    view.mouseExited(with: event)
+    #expect(locations == [CGPoint(x: 100, y: 25), nil])
+    view.viewWillMove(toWindow: nil)
+    #expect(locations == [CGPoint(x: 100, y: 25), nil, nil])
 }
 
 @MainActor
@@ -68,44 +76,40 @@ private func date(_ seconds: Double) -> Date {
     #expect(ChartGeometry.pressureSegments(pressureHistory).contains { $0.first?.pressure == .warning && $0.count > 1 })
     let prefs = try fixture.preferences()
     defer { fixture.cleanUp() }
-    let controller = try MainWindowController(model: MonitorViewModel(service: fixture, preferences: prefs))
-    defer { controller.window?.close() }
+    let model = try MonitorViewModel(service: fixture, preferences: prefs)
     let series = HistorySeries(series: "system", points: [10.0, 20, 40].map {
         HistoryPoint(t: date($0), cpuPercent: .ok($0), footprintBytes: .ok($0 * 1024),
                      diskReadBps: .ok($0), diskWriteBps: .ok($0 * 2), memoryUsedBytes: .ok($0 * 1024), memoryPressurePercent: .ok($0))
     })
-    let charts = [controller.systemCPUChart, controller.systemMemoryChart, controller.systemPressureChart,
-                  controller.cpuChart, controller.memoryChart, controller.ioChart]
-    for chart in charts {
-        chart.update(series)
+    let cursor = model.chartSelection
+    cursor.move(to: date(25), from: .systemCPU)
+    #expect(cursor.time == date(25))
+    cursor.updateSelection(date(40), from: .swap)
+    cursor.updateSelection(nil, from: .systemCPU)
+    #expect(cursor.time == date(25))
+    cursor.updateSelection(date(24), from: .systemCPU)
+    #expect(cursor.time == date(24))
+    cursor.move(to: date(25), from: .systemCPU)
+    let readout = try #require(HistoryChartKind.systemCPU.hoverReadout(series: series, time: cursor.time, hovered: true))
+    #expect(readout.hasSuffix(" · 20.0%"))
+    #expect(HistoryChartKind.systemMemory.hoverReadout(series: series, time: cursor.time, hovered: false) == "20.0 KiB")
+    #expect(HistoryChartKind.pressure.hoverReadout(series: series, time: cursor.time, hovered: false) == "20%")
+    #expect(HistoryChartKind.io.hoverReadout(series: series, time: cursor.time, hovered: false) == "Read: 20 B/s, Write: 40 B/s")
+    for kind in [HistoryChartKind.systemCPU, .systemMemory, .pressure, .cpu, .memory, .io] {
+        #expect(kind.hoverReadout(series: series, time: cursor.time, hovered: cursor.hoveredChart == kind) != nil)
     }
-    controller.window?.contentView?.layoutSubtreeIfNeeded()
-    let cpu = controller.systemCPUChart
-    let location = cpu.convert(NSPoint(x: cpu.bounds.midX, y: cpu.bounds.midY), to: nil)
-    let event = try #require(NSEvent.mouseEvent(with: .mouseMoved, location: location, modifierFlags: [], timestamp: 0,
-                                                windowNumber: controller.window?.windowNumber ?? 0, context: nil,
-                                                eventNumber: 0, clickCount: 0, pressure: 0))
-    cpu.mouseEntered(with: event)
-    #expect(controller.chartCursor.time == date(25))
-    let readout = try #require(cpu.hoverReadout)
-    #expect(readout.range(of: #"^\d{2}:\d{2}:\d{2} · 20\.0%$"#, options: .regularExpression) != nil)
-    #expect(controller.systemMemoryChart.hoverReadout == "20.0 KiB")
-    #expect(controller.systemPressureChart.hoverReadout == "20%")
-    #expect(controller.ioChart.hoverReadout == "Read: 20 B/s, Write: 40 B/s")
-    for chart in charts {
-        #expect(chart.hoverReadout != nil)
-        #expect(chart.accessibilityTitle()?.hasPrefix("Cursor: ") == true)
-    }
-    #expect(controller.systemCPUChart.accessibilityValue() as? String == "40.0%")
-    #expect(controller.systemMemoryChart.accessibilityValue() as? String == "40.0 KiB")
-    controller.chartCursor.move(to: date(30), from: controller.ioChart)
-    controller.chartCursor.clear(from: controller.systemCPUChart)
-    #expect(controller.chartCursor.time == date(30))
-    controller.systemMemoryChart.update(HistorySeries(series: "system", points: [series.points[0]]))
-    #expect(controller.systemMemoryChart.hoverReadout == nil)
-    controller.ioChart.mouseExited(with: NSEvent())
-    for chart in charts {
-        #expect(chart.hoverReadout == nil)
-        #expect(chart.accessibilityTitle() == nil)
-    }
+    #expect(HistoryChartKind.systemCPU.values(at: series.points.last) == "40.0%")
+    #expect(HistoryChartKind.systemMemory.values(at: series.points.last) == "40.0 KiB")
+    cursor.move(to: date(30), from: .io)
+    cursor.clear(from: .systemCPU)
+    #expect(cursor.time == date(30))
+    #expect(HistoryChartKind.systemMemory.hoverReadout(series: HistorySeries(series: "system", points: [series.points[0]]), time: cursor.time, hovered: false) == nil)
+    cursor.clear(from: .io)
+    #expect(cursor.time == nil && cursor.hoveredChart == nil)
+    var gapped = series
+    gapped.gaps = [HistoryGap(from: date(15), to: date(30))]
+    #expect(HistoryChartKind.cpu.hoverReadout(series: gapped, time: date(25), hovered: true) == nil)
+    cursor.move(to: date(20), from: .cpu)
+    await model.setVisibility(window: false, menuBar: false)
+    #expect(cursor.time == nil)
 }

@@ -1,8 +1,31 @@
 import Foundation
-import ProcglintCore
+import Observation
+
+// Selective imports avoid the wire Observation type shadowing the Observation framework in macro expansion.
+import enum ProcglintCore.AgentError
+import struct ProcglintCore.HistoryRequest
+import struct ProcglintCore.HistorySeries
+import enum ProcglintCore.LeaseKind
+import struct ProcglintCore.LeaseRequest
+import protocol ProcglintCore.MonitorService
+import protocol ProcglintCore.MonotonicClock
+import struct ProcglintCore.PermissionSet
+import enum ProcglintCore.ProcessField
+import enum ProcglintCore.ProcessFilter
+import struct ProcglintCore.ProcessKey
+import struct ProcglintCore.ProcessPage
+import struct ProcglintCore.ProcessQuery
+import struct ProcglintCore.ProcessSample
+import enum ProcglintCore.SamplingInterval
+import struct ProcglintCore.SamplingLease
+import struct ProcglintCore.SamplingPolicy
+import struct ProcglintCore.SnapshotHeader
+import struct ProcglintCore.SystemMonotonicClock
+import enum ProcglintCore.TerminationSignal
 import ProcglintIPC
 
 @MainActor
+@Observable
 final class MonitorViewModel {
     let service: any MonitorService
     let preferences: AppPreferences
@@ -14,6 +37,11 @@ final class MonitorViewModel {
     private(set) var detail: ProcessSample?
     private(set) var history: HistorySeries?
     private(set) var systemHistory: HistorySeries?
+    private(set) var memorySummaryHistory: [MemorySummaryPoint] = []
+    private(set) var permissions: PermissionSet
+    let chartSelection = ChartSelection()
+    private var memoryHistoryInterrupted = true
+    private var memoryHistorySnapshotID: String?
     private(set) var selectionUpdate: Task<Void, Never>?
     private(set) var pinned = false
     private(set) var nextCursor: String?
@@ -22,13 +50,13 @@ final class MonitorViewModel {
     private(set) var menuBarVisible = false
     private(set) var isFetching = false
     private(set) var focused = true
-    private(set) var focusUpdate: Task<Void, Never>?
+    @ObservationIgnored private(set) var focusUpdate: Task<Void, Never>?
     private(set) var terminating = false
     private(set) var agentReachable = false
     let registrationStatus: @MainActor () -> AgentRegistration.Status
 
     var showsAgentBanner: Bool {
-        registrationStatus() != .enabled || !agentReachable
+        AgentSetup(status: registrationStatus(), reachable: agentReachable).showsBanner
     }
 
     private let clock: any MonotonicClock
@@ -45,7 +73,7 @@ final class MonitorViewModel {
     private var terminationMessage = ""
     private var terminationTarget: ProcessKey?
     var message = ""
-    var onChange: (@MainActor () -> Void)?
+    @ObservationIgnored var onChange: (@MainActor () -> Void)?
 
     init(service: any MonitorService, preferences: AppPreferences, clock: any MonotonicClock = SystemMonotonicClock(),
          registrationStatus: @escaping @MainActor () -> AgentRegistration.Status = { .enabled }) throws
@@ -55,6 +83,7 @@ final class MonitorViewModel {
         self.clock = clock
         self.registrationStatus = registrationStatus
         policy = try preferences.store.samplingPolicy()
+        permissions = try preferences.store.allowedPermissions()
         query = try ProcessQuery(filter: .all, limit: 200, fields: ProcessField.allCases.filter { $0 != .path })
     }
 
@@ -130,6 +159,9 @@ final class MonitorViewModel {
     }
 
     func setVisibility(window: Bool, menuBar: Bool) async {
+        if !window {
+            memoryHistoryInterrupted = true; chartSelection.clear()
+        }
         windowVisible = window
         menuBarVisible = menuBar
         onChange?()
@@ -221,7 +253,7 @@ final class MonitorViewModel {
                         }
                     } while requested != query && windowVisible
                 } else {
-                    header = try await service.snapshot(top: 1, sort: .cpu).header
+                    try await updateHeader(service.snapshot(top: 1, sort: .cpu).header)
                     agentReachable = true
                 }
                 if let header {
@@ -304,10 +336,10 @@ final class MonitorViewModel {
         agentReachable = true
         let sameSnapshot = header?.snapshotID == page.snapshot.snapshotID && header?.agentInstanceID == page.snapshot.agentInstanceID
         guard page.snapshot.status != .unavailable else {
-            header = page.snapshot
+            updateHeader(page.snapshot)
             return
         }
-        header = page.snapshot
+        updateHeader(page.snapshot)
         if append {
             let existing = Set(rows.map(\.processKey))
             rows += page.items.filter { !existing.contains($0.processKey) }
@@ -323,6 +355,27 @@ final class MonitorViewModel {
         if let selectedKey, !sameSnapshot || detail?.processKey != selectedKey {
             detail = rows.first { $0.processKey == selectedKey }
         }
+    }
+
+    private func updateHeader(_ header: SnapshotHeader) {
+        let restarted = self.header?.agentInstanceID != header.agentInstanceID
+        if self.header != header {
+            self.header = header
+        }
+        if header.status == .unavailable {
+            memoryHistoryInterrupted = true
+        }
+        guard windowVisible, header.status != .unavailable,
+              restarted || memoryHistorySnapshotID != header.snapshotID else { return }
+        if memorySummaryHistory.last.map({ $0.time >= header.sampledAt }) == true || restarted {
+            memorySummaryHistory.removeAll()
+        }
+        memorySummaryHistory.append(MemorySummaryPoint(time: header.sampledAt, swap: header.system.swapUsedBytes,
+                                                       compressed: .ok(Double(header.system.compressedBytes)), startsSegment: memoryHistoryInterrupted))
+        let cutoff = header.sampledAt.addingTimeInterval(-Double(policy.historyMinutes * 60))
+        memorySummaryHistory = Array(memorySummaryHistory.filter { $0.time >= cutoff }.suffix(600))
+        memoryHistoryInterrupted = false
+        memoryHistorySnapshotID = header.snapshotID
     }
 
     func loadMore() async {
@@ -349,6 +402,7 @@ final class MonitorViewModel {
         guard selectedKey != key else { return }
         selectionRevision += 1
         selectedKey = key
+        chartSelection.clear()
         detail = rows.first { $0.processKey == key }
         history = nil
         historyCursor = nil
@@ -371,14 +425,16 @@ final class MonitorViewModel {
             guard windowVisible, selectedKey == key, selectionRevision == revision else { return }
             var process = try await service.process(key: key)
             guard selectedKey == key, selectionRevision == revision else { return }
-            let permissions = try preferences.store.allowedPermissions()
+            permissions = try preferences.store.allowedPermissions()
             if !permissions.contains(.includeCommandLines) {
                 process.hideCommandLines()
             }
             if !permissions.contains(.includePaths) {
                 process.path = nil
             }
-            detail = process
+            if detail != process {
+                detail = process
+            }
             if query.filter == .pinned {
                 pinned = rows.contains { $0.processKey == key }
             } else {
@@ -401,6 +457,7 @@ final class MonitorViewModel {
     }
 
     func permissionsChanged() {
+        permissions = (try? preferences.store.allowedPermissions()) ?? []
         selectionRevision += 1
         if (try? preferences.store.allowedPermissions().contains(.includePaths)) != true {
             detail?.path = nil
@@ -446,6 +503,7 @@ final class MonitorViewModel {
     }
 
     private func report(_ error: any Error) {
+        memoryHistoryInterrupted = true
         message = Display.error(error)
         header = nil
         if let error = error as? AgentError, error.code == .agentUnavailable {

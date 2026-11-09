@@ -26,6 +26,8 @@ final class ProcessTableDataSource: NSObject, NSTableViewDataSource, NSTableView
               let value = cellText(row: row, column: column) else { return nil }
         let cell = tableView.makeView(withIdentifier: tableColumn.identifier, owner: self) as? NSTableCellView ?? makeCell(tableColumn.identifier)
         cell.textField?.setAccessibilityIdentifier("process.\(model.rows[row].pid).\(column.rawValue)")
+        cell.textField?.font = column.numeric ? .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular) : .systemFont(ofSize: NSFont.systemFontSize)
+        cell.textField?.alignment = column.numeric ? .right : .left
         cell.textField?.stringValue = value.text
         cell.textField?.toolTip = value.reason
         cell.textField?.setAccessibilityHelp(value.reason)
@@ -52,12 +54,23 @@ final class ProcessTableDataSource: NSObject, NSTableViewDataSource, NSTableView
     func reload(_ tableView: NSTableView) {
         restoringSelection = true
         tableView.reloadData()
+        restoreSelection(tableView, scrollToSelection: false)
+        restoringSelection = false
+    }
+
+    func restoreSelection(_ tableView: NSTableView, scrollToSelection: Bool = true) {
+        restoringSelection = true
+        defer { restoringSelection = false }
         if let index = model.rows.firstIndex(where: { $0.processKey == model.selectedKey }) {
-            tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            if tableView.selectedRow != index {
+                tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                if scrollToSelection {
+                    tableView.scrollRowToVisible(index)
+                }
+            }
         } else {
             tableView.deselectAll(nil)
         }
-        restoringSelection = false
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {

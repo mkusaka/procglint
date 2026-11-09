@@ -150,31 +150,21 @@ import Testing
 }
 
 @MainActor
-@Test func compactChartsKeepFixedScaleSplitGapsAndOnlyRedrawChanges() {
+@Test func compactChartsKeepFixedScaleSplitGapsAndMissingValues() throws {
     let series = HistorySeries(series: "system", points: [0, 1, 4, 5].map {
         HistoryPoint(t: Date(timeIntervalSince1970: Double($0)), cpuPercent: .ok(25), memoryUsedBytes: .ok(4096))
     }, gaps: [HistoryGap(from: Date(timeIntervalSince1970: 2), to: Date(timeIntervalSince1970: 3))])
-    let segments = ChartGeometry.segments(series, value: { $0.cpuPercent })
-    #expect(segments.map(\.count) == [2, 2])
-    #expect(segments.flatMap(\.self).map { ChartGeometry.fraction($0.value, in: 0 ... 100) } == [0.25, 0.25, 0.25, 0.25])
-    #expect(ChartGeometry.fraction(4096, in: 0 ... 8192) == 0.5)
-    #expect(ChartGeometry.fraction(150, in: 0 ... 100) == 1)
-    #expect(ChartGeometry.fraction(-1, in: 0 ... 100) == 0)
-    let chart = HistoryChartView(label: "System CPU", fields: [{ $0.cpuPercent }], compact: true, format: Display.percent)
-    chart.update(series, fixedYRange: 0 ... 100)
-    #expect(chart.accessibilityLabel()?.contains("25.0%") == true)
-    #expect(chart.accessibilityValue() as? String == "25.0%")
-    #expect(chart.fixedYRange == 0 ... 100)
-    chart.setAccessibilityValue("unchanged")
-    chart.update(series, fixedYRange: 0 ... 100)
-    #expect(chart.accessibilityValue() as? String == "unchanged")
-    chart.update(series, fixedYRange: 0 ... 200)
-    #expect(chart.fixedYRange == 0 ... 200)
-    #expect(chart.accessibilityValue() as? String == "25.0%")
-    var updated = series
-    updated.points.append(HistoryPoint(t: Date(timeIntervalSince1970: 6), cpuPercent: .warmingUp))
-    chart.update(updated, fixedYRange: 0 ... 100)
-    #expect(chart.accessibilityLabel()?.contains("warming_up") == true)
+    #expect(ChartGeometry.segments(series, value: { $0.cpuPercent }).map(\.count) == [2, 2])
+    let prefs = preferences()
+    defer { prefs.defaults.removePersistentDomain(forName: prefs.store.suiteName ?? "") }
+    let model = try MonitorViewModel(service: FakeMonitorService(), preferences: prefs)
+    model.apply(ProcessPage(snapshot: snapshot().header, items: [], totalMatched: 0))
+    #expect(HistoryChart(model: model, kind: .systemCPU).fixedMaximum == 100)
+    #expect(HistoryChart(model: model, kind: .pressure).fixedMaximum == 100)
+    #expect(HistoryChart(model: model, kind: .systemMemory).fixedMaximum == 8192)
+    #expect(HistoryChart(model: model, kind: .cpu).fixedMaximum == nil)
+    #expect(HistoryChartKind.systemCPU.values(at: series.points.last) == "25.0%")
+    #expect(HistoryChartKind.cpu.values(at: HistoryPoint(t: Date(), cpuPercent: .warmingUp)).contains("warming_up"))
 }
 
 @MainActor
@@ -197,23 +187,16 @@ import Testing
     model.select(process.processKey)
     await model.selectionUpdate?.value
     await model.refreshInspector()
-    #expect(controller.systemCPUChart.accessibilityIdentifier() == "systemCPUChart")
-    #expect(controller.systemMemoryChart.accessibilityIdentifier() == "systemMemoryChart")
-    #expect(controller.systemPressureChart.accessibilityIdentifier() == "systemPressureChart")
-    #expect(controller.cpuChart.accessibilityIdentifier() == "processCPUChart")
-    #expect(controller.memoryChart.accessibilityIdentifier() == "processMemoryChart")
-    #expect(controller.ioChart.accessibilityIdentifier() == "processIOChart")
+    #expect([HistoryChartKind.systemCPU, .systemMemory, .pressure, .cpu, .memory, .io].map(\.identifier) == [
+        "systemCPUChart", "systemMemoryChart", "systemPressureChart", "processCPUChart", "processMemoryChart", "processIOChart",
+    ])
     controller.render()
-    #expect(controller.systemCPUChart.fixedYRange == 0 ... 100)
-    #expect(controller.systemPressureChart.fixedYRange == 0 ... 100)
-    #expect(controller.systemPressureChart.accessibilityValue() as? String == "39%")
-    #expect(controller.systemMemoryChart.fixedYRange == 0 ... 8192)
-    #expect(controller.cpuChart.fixedYRange == nil)
-    #expect(controller.systemCPUChart.accessibilityLabel()?.contains("25.0%") == true)
-    #expect(controller.systemMemoryChart.accessibilityLabel()?.contains("4.0 KiB") == true)
-    #expect(controller.cpuChart.accessibilityLabel()?.contains("12.5%") == true)
-    #expect(controller.memoryChart.accessibilityLabel()?.contains("2.0 KiB") == true)
-    #expect(controller.ioChart.accessibilityLabel()?.contains("1.0 KiB/s, 512 B/s") == true)
+    #expect(HistoryChartKind.systemCPU.values(at: model.systemHistory?.points.last) == "25.0%")
+    #expect(HistoryChartKind.systemMemory.values(at: model.systemHistory?.points.last) == "4.0 KiB")
+    #expect(HistoryChartKind.pressure.values(at: model.systemHistory?.points.last) == "39%")
+    #expect(HistoryChartKind.cpu.values(at: model.history?.points.last) == "12.5%")
+    #expect(HistoryChartKind.memory.values(at: model.history?.points.last) == "2.0 KiB")
+    #expect(HistoryChartKind.io.values(at: model.history?.points.last) == "Read: 1.0 KiB/s, Write: 512 B/s")
     controller.window?.close()
 }
 
@@ -227,24 +210,21 @@ import Testing
     let window = try #require(controller.window)
     defer { window.close() }
     controller.render()
-    controller.summary.stringValue = "CPU 25.0% · Memory 4.0 GiB/8.0 GiB · wired 1.0 GiB · compressed 512 MiB · ok"
     for width in [window.frame.width, window.minSize.width] {
         window.setFrame(NSRect(x: 0, y: 0, width: width, height: window.frame.height), display: false)
         let content = try #require(window.contentView)
         content.layoutSubtreeIfNeeded()
-        let summaryContainer = try #require(controller.summary.superview)
-        let summaryRect = controller.summary.alignmentRect(forFrame: controller.summary.frame)
-        let summaryFrame = summaryContainer.convert(summaryRect, to: content)
-        var previousRight = summaryFrame.maxX
-        for chart in [controller.systemCPUChart, controller.systemMemoryChart, controller.systemPressureChart] {
-            #expect(chart.bounds.size == NSSize(width: 160, height: 36))
-            let group = try #require(chart.superview as? NSStackView)
-            let label = try #require(group.arrangedSubviews.first as? NSTextField)
-            #expect(label.frame.width >= label.intrinsicContentSize.width)
-            let frame = group.convert(group.bounds, to: content)
-            #expect(frame.minX >= previousRight + 16)
-            #expect(frame.maxX <= content.bounds.maxX - 12)
-            previousRight = frame.maxX
-        }
+        controller.splitController.splitView.adjustSubviews()
+        controller.splitController.view.layoutSubtreeIfNeeded()
+        #expect(controller.splitController.splitViewItems.count == 2)
+        #expect(controller.splitController.splitViewItems.last?.canCollapse == true)
+        #expect(controller.splitController.view.frame.width <= content.bounds.width)
+        #expect(window.toolbarStyle == .unified)
+        #expect(window.toolbar?.items.contains { $0 is NSSearchToolbarItem } == true)
+        controller.toggleInspector()
+        #expect(controller.splitController.splitViewItems.last?.isCollapsed == true)
+        controller.toggleInspector()
+        #expect(controller.splitController.splitViewItems.last?.isCollapsed == false)
+        #expect(SummaryCard.allCases.map(\.title) == ["CPU", "Memory used / physical", "Memory pressure", "Swap", "Compressed"])
     }
 }

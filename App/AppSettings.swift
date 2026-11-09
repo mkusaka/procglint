@@ -1,5 +1,7 @@
+import Combine
 import Foundation
 import ProcglintCore
+import ProcglintIPC
 
 public typealias AppSettingsKeys = ProcglintCore.AppSettingsKeys
 public typealias DefaultsSettingsStore = UserDefaultsSettingsStore
@@ -80,22 +82,32 @@ enum MCPConfiguration {
 }
 
 @MainActor
-final class SettingsViewModel {
+final class SettingsViewModel: ObservableObject {
     let service: any MonitorService
     let preferences: AppPreferences
     let helperURL: URL?
     let registrationStatus: @MainActor () -> String
     let registerAgent: @MainActor () throws -> Void
-    var policy: SamplingPolicy
-    var permissions: PermissionSet
-    var diagnostics = "Not loaded"
-    var message = ""
+    @Published var policy: SamplingPolicy
+    @Published var permissions: PermissionSet
+    @Published var diagnostics = "Not loaded"
+    @Published var message = ""
+    @Published private(set) var agentState: AgentRegistration.Status
+    @Published private(set) var agentReachable = false
+    @Published private(set) var changingRegistration = false
+    @Published private(set) var registrationError = ""
+    private let agentStatus: @MainActor () -> AgentRegistration.Status
+
+    var agentSetup: AgentSetup {
+        AgentSetup(status: agentState, reachable: agentReachable)
+    }
+
     var onChange: (@MainActor () -> Void)?
     var onPolicyChanged: (@MainActor (SamplingPolicy) -> Void)?
     var onPermissionsChanged: (@MainActor () -> Void)?
     var onRegistrationChanged: (@MainActor () async -> Void)?
     let loginItem: LoginItemService
-    private(set) var changingLoginItem = false
+    @Published private(set) var changingLoginItem = false
 
     var opensAtLogin: Bool {
         loginItem.status() == .enabled || loginItem.status() == .requiresApproval
@@ -111,7 +123,8 @@ final class SettingsViewModel {
 
     init(service: any MonitorService, preferences: AppPreferences, helperURL: URL?,
          registrationStatus: @escaping @MainActor () -> String, registerAgent: @escaping @MainActor () throws -> Void,
-         loginItem: LoginItemService = .mainApp) throws
+         loginItem: LoginItemService = .mainApp,
+         agentStatus: @escaping @MainActor () -> AgentRegistration.Status = { .notRegistered }) throws
     {
         self.service = service
         self.preferences = preferences
@@ -119,17 +132,29 @@ final class SettingsViewModel {
         self.registrationStatus = registrationStatus
         self.registerAgent = registerAgent
         self.loginItem = loginItem
+        self.agentStatus = agentStatus
+        agentState = agentStatus()
         policy = try preferences.store.samplingPolicy()
         permissions = try preferences.store.allowedPermissions()
     }
 
+    func reloadRegistrationStatus() {
+        agentState = agentStatus()
+        objectWillChange.send()
+    }
+
     func refresh() async {
+        reloadRegistrationStatus()
         do {
             let status = try await service.status()
+            agentReachable = true
             policy = status.policy
             onPolicyChanged?(status.policy)
             diagnostics = Self.describe(status)
-        } catch { diagnostics = Display.error(error) }
+        } catch {
+            agentReachable = false
+            diagnostics = Display.error(error)
+        }
         onChange?()
     }
 
@@ -166,11 +191,36 @@ final class SettingsViewModel {
     }
 
     func register() async {
-        do { try registerAgent(); message = registrationStatus() } catch { message = Display.error(error) }
+        guard !changingRegistration, agentSetup.canRegister else { return }
+        changingRegistration = true
+        registrationError = ""
+        defer { changingRegistration = false; onChange?() }
+        do { try registerAgent(); message = registrationStatus() } catch {
+            registrationError = Display.error(error)
+            message = registrationError
+        }
         await registrationChanged()
+        await refresh()
+    }
+
+    func unregister(using action: @MainActor () async throws -> Void) async {
+        guard !changingRegistration, agentSetup.canUnregister else { return }
+        changingRegistration = true
+        registrationError = ""
+        defer { changingRegistration = false; onChange?() }
+        do {
+            try await action()
+            message = registrationStatus()
+        } catch {
+            registrationError = Display.error(error)
+            message = registrationError
+        }
+        await registrationChanged()
+        await refresh()
     }
 
     func registrationChanged() async {
+        reloadRegistrationStatus()
         onChange?()
         await onRegistrationChanged?()
     }

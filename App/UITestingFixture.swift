@@ -14,7 +14,17 @@ final class UITestingFixture: MonitorService {
     private let auditURL: URL?
     let suiteName = "io.github.mkusaka.procglint.ui-testing.\(UUID().uuidString)"
 
-    var agentRegistered: Bool
+    var agentRegistrationStatus: AgentRegistration.Status
+    private let requiresApproval: Bool
+    var agentRegistered: Bool {
+        get { agentRegistrationStatus == .enabled }
+        set { agentRegistrationStatus = newValue ? .enabled : .notRegistered }
+    }
+
+    func registerAgent() {
+        agentRegistrationStatus = requiresApproval ? .requiresApproval : .enabled
+    }
+
     private var loginItemStatus = AgentRegistration.Status.notRegistered
 
     var loginItem: LoginItemService {
@@ -23,8 +33,9 @@ final class UITestingFixture: MonitorService {
                          unregister: { self.loginItemStatus = .notRegistered })
     }
 
-    init(unregistered: Bool = false) throws {
-        agentRegistered = !unregistered
+    init(unregistered: Bool = false, requiresApproval: Bool = false) throws {
+        self.requiresApproval = requiresApproval
+        agentRegistrationStatus = unregistered ? .notRegistered : (requiresApproval ? .requiresApproval : .enabled)
         currentPolicy = try SamplingPolicy()
         let date = Date(timeIntervalSince1970: 1_800_000_000)
         let rows = try (0 ..< 20).map { index in
@@ -111,13 +122,23 @@ final class UITestingFixture: MonitorService {
     func history(_ request: HistoryRequest) async throws -> [HistorySeries] {
         let date = current.sampledAt
         return request.series.map { series in
-            let points = [-30.0, -20, -5, 0].map { offset in
-                HistoryPoint(t: date.addingTimeInterval(offset), cpuPercent: .ok(25),
-                             footprintBytes: series == "system" ? nil : .ok(1_048_576),
-                             diskReadBps: .ok(1024), diskWriteBps: .ok(2048),
-                             memoryUsedBytes: series == "system" ? .ok(4_294_967_296) : nil,
-                             memoryPressurePercent: series == "system" ? .ok(offset <= -20 ? 65 : 39) : nil,
-                             memoryPressure: series == "system" ? (offset <= -20 ? .warning : .normal) : nil)
+            let points = stride(from: -600.0, through: 0, by: 5).map { offset in
+                let level: MemoryPressure = (-210.0 ... -190).contains(offset) ? .critical : ((-240.0 ... -160).contains(offset) ? .warning : .normal)
+                let pressureBase: Double = switch level {
+                case .normal: 39
+                case .warning: 65
+                case .critical: 88
+                }
+                let cpu = 25 + 8 * sin(offset / 25)
+                let memory = 4_294_967_296 + 268_435_456 * sin(offset / 80)
+                let read = 1024 * (1 + 0.2 * sin(offset / 20))
+                let write = 2048 * (1 + 0.25 * sin(offset / 40))
+                return HistoryPoint(t: date.addingTimeInterval(offset), cpuPercent: .ok(cpu),
+                                    footprintBytes: series == "system" ? nil : .ok(1_048_576),
+                                    diskReadBps: .ok(read), diskWriteBps: .ok(write),
+                                    memoryUsedBytes: series == "system" ? .ok(memory) : nil,
+                                    memoryPressurePercent: series == "system" ? .ok(pressureBase + 4 * sin(offset / 35)) : nil,
+                                    memoryPressure: series == "system" ? level : nil)
             }
             return HistorySeries(series: series, points: points,
                                  gaps: [HistoryGap(from: date.addingTimeInterval(-19), to: date.addingTimeInterval(-6))])

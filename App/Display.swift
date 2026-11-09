@@ -100,6 +100,10 @@ enum ProcessColumn: String, CaseIterable {
         self == .footprint ? "Same as Activity Monitor's Memory column (phys_footprint): memory this process is charged for, including compressed and swapped pages. RSS (optional column) counts shared pages and is usually misleading." : nil
     }
 
+    var numeric: Bool {
+        self != .name && self != .user
+    }
+
     var optional: Bool {
         [.cpuTime, .rss, .readBytes, .writtenBytes].contains(self)
     }
