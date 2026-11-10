@@ -12,7 +12,7 @@ The screenshots use isolated demonstration data, not a live process list.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/images/main-light.png">
-  <img src="docs/images/main-light.png" alt="procglint process monitor with system metric cards, a process table, and the selected process’s Launched by chain and synchronized history charts" width="1360">
+  <img src="docs/images/main-light.png" alt="procglint process monitor with system and Battery cards, a sortable Power column, and the selected process’s Launched by chain and synchronized history charts" width="1360">
 </picture>
 
 <picture>
@@ -23,7 +23,8 @@ The screenshots use isolated demonstration data, not a live process list.
 
 ## Features
 
-- Process CPU, cumulative CPU time, Memory (footprint) and optional RSS, attributed disk I/O counters/rates, PID and owner; system CPU, memory pressure, swap usage and defined VM memory statistics.
+- Process CPU, cumulative CPU time, Memory (footprint) and optional RSS, attributed disk I/O counters/rates, OS-attributed power, PID and owner; system CPU, memory pressure, swap usage and defined VM memory statistics.
+- Battery charge, charging/time-remaining state, system power and discharge rate, with health/cycle count in the tooltip. Battery and process power history share the charts’ hover cursor; desktop Macs show no Battery card.
 - Search, filter, sort and choose columns; inspect details, pin processes and read bounded history with explicit gaps for unobserved time.
 - Optional CPU/memory menu-bar display. Default updates are 5 seconds for the window and 10 seconds for the menu bar; no periodic sampling without an active lease.
 - Shared stdio MCP bridge: read-only, own processes, no paths by default; opt-in bounded observations, configuration and termination.
@@ -58,13 +59,19 @@ For a source-built app, run `scripts/build-app.sh` (Release, ad-hoc signed by de
 
 The process table fills when the background agent is available. If it cannot be reached, the main-window banner explains how to register or approve it; **Settings…** includes diagnostics and the same registration action.
 
+### Battery and power
+
+On Macs with a battery, the **Battery** card shows charge, charging status and the available time estimate. **Using** is system power; **Draining** is battery discharge power and appears only while discharging. They are separate measurements, not a sum of process power. Hover over the card for battery health and cycle count, or over its sparkline for system power history in watts.
+
+The default **Power** column after CPU sorts by OS-attributed average power, displayed in mW or W. It is available for own processes only: it is **not Activity Monitor’s Energy Impact** and does not attribute battery drain. The inspector includes a synchronized Power history chart in watts. Unavailable or warming-up values remain **—**, never zero.
+
 ### Which memory numbers matter?
 
 Start with **Memory pressure: Normal / Warning / Critical** in the header. Its green/yellow/red badge also names the state, so colour is not the only signal. Warning or Critical means macOS is having more trouble meeting memory demand; high memory usage alone is not proof of trouble.
 
 The memory cards show **Used … of …**, **Swap …**, and **Compressed …** in memory-style GB/MB (1024-based, matching installed RAM capacities). Swap is memory stored on disk; compression saves RAM. A nonzero swap value can remain after pressure subsides, and compressed memory alone is not a fault. Wired memory is in the card tooltips rather than a separate card. The system chart remains **Memory used / physical**, using the existing active + wired + compressor-page definition (not a reconstruction of Activity Monitor's Used total).
 
-The default process **Memory** column is unchanged `ri_phys_footprint`, the same measure as Activity Monitor's Memory column: memory charged to that process, including compressed and swapped pages. Its header tooltip explains this. **RSS** remains optional; it counts shared pages and is usually misleading when comparing process memory costs. The inspector calls this **Memory (footprint)**. JSON/MCP still use `footprint_bytes`, and sorting/default columns have not changed. Unavailable pressure or swap is explicit, never Normal or zero.
+The default process **Memory** column is unchanged `ri_phys_footprint`, the same measure as Activity Monitor's Memory column: memory charged to that process, including compressed and swapped pages. Its header tooltip explains this. **RSS** remains optional; it counts shared pages and is usually misleading when comparing process memory costs. The inspector calls this **Memory (footprint)**. JSON/MCP still use `footprint_bytes`, and memory sorting is unchanged. Unavailable pressure or swap is explicit, never Normal or zero.
 
 **Settings… → Open procglint at login** optionally opens the GUI at login (off by default). This is separate from background-agent registration; MCP can use the agent without opening the GUI. If macOS requests approval, use the hint and **Open Login Items…** button in Settings.
 
@@ -158,6 +165,8 @@ For a development LaunchAgent, unregister any bundled agent first, then run `scr
     -project Procglint.xcodeproj -scheme Procglint -destination 'platform=macOS' \
     -derivedDataPath build/DD CODE_SIGN_IDENTITY=- test
   ```
+
+  For manual fixture screenshots, launch the built app with `--ui-testing --ui-testing-selected`. `PROCGLINT_UI_TEST_APPEARANCE=light` / `dark` selects appearance; `PROCGLINT_UI_TEST_BATTERY=charging` (default), `discharging`, `charged`, `unknown`, or `none` selects the isolated battery fixture.
 
 - **Bundle:** `PROCGLINT_BUNDLE_TEST=1 scripts/test.sh --filter 'bundleBuild|builtAppHasExpectedLayoutMetadataAndSignatures'` builds an ad-hoc Debug app and checks layout, metadata, arm64 binaries and signatures. Replaces `build/Procglint.app`; it does not register the agent or verify notarization.
 - **Performance:** `PROCGLINT_PERF=1 scripts/test.sh --filter PerformanceTests` (Release recommended: add `-c release`). Run `scripts/benchmark.sh` for benchmarks; see [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for details.

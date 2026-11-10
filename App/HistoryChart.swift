@@ -148,7 +148,7 @@ final class ChartSelection {
 }
 
 enum HistoryChartKind: String, CaseIterable {
-    case systemCPU, systemMemory, pressure, swap, compressed, cpu, memory, io
+    case systemCPU, systemMemory, pressure, swap, compressed, systemPower, cpu, memory, io, power
 
     var identifier: String {
         switch self {
@@ -157,6 +157,8 @@ enum HistoryChartKind: String, CaseIterable {
         case .pressure: "systemPressureChart"
         case .swap: "systemSwapChart"
         case .compressed: "systemCompressedChart"
+        case .systemPower: "systemPowerChart"
+        case .power: "processPowerChart"
         case .cpu: "processCPUChart"
         case .memory: "processMemoryChart"
         case .io: "processIOChart"
@@ -173,6 +175,8 @@ enum HistoryChartKind: String, CaseIterable {
         case .cpu: "CPU history, percent (one core = 100%)"
         case .memory: "Memory (footprint) history, bytes"
         case .io: "I/O history, bytes per second"
+        case .systemPower: "System power history, watts"
+        case .power: "Process power history, watts (OS-attributed)"
         }
     }
 
@@ -183,6 +187,8 @@ enum HistoryChartKind: String, CaseIterable {
         case .pressure: [{ $0.memoryPressurePercent }]
         case .memory: [{ $0.footprintBytes }]
         case .io: [{ $0.diskReadBps }, { $0.diskWriteBps }]
+        case .systemPower: [{ $0.systemPowerMW }]
+        case .power: [{ $0.powerMW }]
         case .swap, .compressed: []
         }
     }
@@ -192,6 +198,7 @@ enum HistoryChartKind: String, CaseIterable {
         case .systemCPU, .cpu: Display.percent(value)
         case .pressure: String(format: "%.0f%%", value)
         case .io: Display.bytes(value) + "/s"
+        case .systemPower, .power: Display.watts(value / 1000)
         default: Display.bytes(value)
         }
     }
@@ -236,7 +243,7 @@ struct HistoryChart: View {
     }
 
     var body: some View {
-        let system = [.systemCPU, .systemMemory, .pressure, .swap, .compressed].contains(kind)
+        let system = [.systemCPU, .systemMemory, .pressure, .swap, .compressed, .systemPower].contains(kind)
         let series = system ? model.systemHistory : model.history
         let memoryPoints = kind == .swap || kind == .compressed ? model.memorySummaryHistory : []
         if hasTrend {

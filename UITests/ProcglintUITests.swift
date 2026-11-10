@@ -9,12 +9,17 @@ final class ProcglintUITests: XCTestCase {
         try withApp { app, _ in
             let window = app.windows["mainWindow"]
             XCTAssertTrue(window.waitForExistence(timeout: 10))
-            for (card, value) in [("cpu", "25.0%"), ("memory", "4 GB"), ("pressure", "39%"), ("swap", "1 GB"), ("compressed", "512 MB")] {
+            for (card, value) in [("cpu", "25.0%"), ("memory", "4 GB"), ("pressure", "39%"), ("swap", "1 GB"), ("compressed", "512 MB"), ("battery", "69%")] {
                 expectValue(window.staticTexts["summaryValue.\(card)"], equals: value)
             }
             XCTAssertTrue(window.staticTexts["Normal"].exists)
             XCTAssertTrue(window.staticTexts["of 8 GB"].exists)
-            for identifier in ["systemCPUChart", "systemMemoryChart", "systemPressureChart"] {
+            expectValue(window.staticTexts["batteryPower"], equals: "Using 33.1 W")
+            expectValue(window.staticTexts["Charging · 1:53 to full"], equals: "Charging · 1:53 to full")
+            let powerColumn = window.tables["processTable"].descendants(matching: .any)["column.power"]
+            XCTAssertTrue(powerColumn.waitForExistence(timeout: 5))
+            expectValue(powerColumn, equals: "Power")
+            for identifier in ["systemCPUChart", "systemMemoryChart", "systemPressureChart", "systemPowerChart"] {
                 let chart = window.descendants(matching: .any)[identifier]
                 XCTAssertTrue(chart.waitForExistence(timeout: 5))
                 XCTAssertGreaterThan(chart.frame.width, 100)
@@ -39,6 +44,8 @@ final class ProcglintUITests: XCTestCase {
                            "CPU: \(cpu.label); Memory: \(memory.label); Latest: \(String(describing: memory.value))")
             wait(for: NSPredicate(format: "label CONTAINS %@", "Cursor:"), on: app.descendants(matching: .any)["systemPressureChart"])
             wait(for: NSPredicate(format: "label CONTAINS %@", "Cursor: 1.0 MiB"), on: app.descendants(matching: .any)["processMemoryChart"])
+            wait(for: NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Cursor:", " W"), on: app.descendants(matching: .any)["systemPowerChart"])
+            wait(for: NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Cursor:", " W"), on: app.descendants(matching: .any)["processPowerChart"])
             XCTAssertEqual(memory.value as? String, "4.0 GiB")
             app.searchFields["processSearch"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
             wait(for: NSPredicate(format: "NOT (label CONTAINS %@)", "Cursor:"), on: memory)
@@ -102,10 +109,12 @@ final class ProcglintUITests: XCTestCase {
         try withApp { app, _ in
             search("4117", in: app)
             expectValue(app.staticTexts["process.4117.cpu"], equals: "—")
+            expectValue(app.staticTexts["process.4117.power"], equals: "—")
             app.staticTexts["process.4117.name"].click()
             expectValue(app.staticTexts["processIdentity"], contains: "PID 4117 · fixture-user (uid 501)")
             search("4118", in: app)
             expectValue(app.staticTexts["process.4118.cpu"], equals: "—")
+            expectValue(app.staticTexts["process.4118.power"], equals: "—")
             expectValue(app.staticTexts["process.4118.footprint"], equals: "—")
             app.staticTexts["process.4118.name"].click()
             expectValue(app.staticTexts["processIdentity"], contains: "Status: permission_denied")

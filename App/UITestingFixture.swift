@@ -5,6 +5,23 @@ import ProcglintIPC
 /// Only selected by --ui-testing; no OS sampling, XPC, registration, or real signals.
 @MainActor
 final class UITestingFixture: MonitorService {
+    enum BatteryState: String, CaseIterable {
+        case charging, discharging, charged, unknown, none
+
+        var metrics: BatteryMetrics? {
+            guard self != .none else { return nil }
+            if self == .unknown {
+                return BatteryMetrics()
+            }
+            return BatteryMetrics(percent: .ok(self == .charged ? 100 : 69), isCharging: self == .charging,
+                                  externalPower: self != .discharging,
+                                  timeRemainingMinutes: self == .charged ? .unsupported : .ok(self == .charging ? 113 : 190),
+                                  cycleCount: .ok(5), healthPercent: .ok(100),
+                                  systemPowerMW: .ok(33100), adapterPowerMW: .ok(self == .discharging ? 0 : 67000),
+                                  batteryPowerMW: .ok(self == .discharging ? -12400 : (self == .charging ? 28000 : 0)))
+        }
+    }
+
     private let current: Snapshot
     private var store: SnapshotStore
     private var currentPolicy: SamplingPolicy
@@ -33,7 +50,7 @@ final class UITestingFixture: MonitorService {
                          unregister: { self.loginItemStatus = .notRegistered })
     }
 
-    init(unregistered: Bool = false, requiresApproval: Bool = false) throws {
+    init(unregistered: Bool = false, requiresApproval: Bool = false, battery: BatteryState = .charging) throws {
         self.requiresApproval = requiresApproval
         agentRegistrationStatus = unregistered ? .notRegistered : (requiresApproval ? .requiresApproval : .enabled)
         currentPolicy = try SamplingPolicy()
@@ -54,7 +71,8 @@ final class UITestingFixture: MonitorService {
                 diskWrittenBytes: denied ? .permissionDenied : .ok(8192),
                 diskReadBps: cpu.status == .ok ? .ok(1024) : cpu,
                 diskWriteBps: cpu.status == .ok ? .ok(2048) : cpu,
-                startTime: date, path: "/fixture/worker"
+                startTime: date, path: "/fixture/worker",
+                powerMW: !own || denied ? .permissionDenied : (cpu.status == .ok ? .ok(index == 1 ? 12 : Double(index + 1) * 1030) : cpu)
             )
         }
         current = Snapshot(
@@ -65,7 +83,8 @@ final class UITestingFixture: MonitorService {
                                   memoryUsedBytes: 4_294_967_296, wiredBytes: 1_073_741_824,
                                   compressedBytes: 536_870_912, activeBytes: 2_684_354_560,
                                   inactiveBytes: 1_073_741_824, freeBytes: 3_221_225_472,
-                                  memoryPressure: .ok(.normal), memoryPressurePercent: .ok(39), swapUsedBytes: .ok(1_073_741_824), swapTotalBytes: .ok(2_147_483_648)),
+                                  memoryPressure: .ok(.normal), memoryPressurePercent: .ok(39), swapUsedBytes: .ok(1_073_741_824), swapTotalBytes: .ok(2_147_483_648),
+                                  battery: battery.metrics),
             processes: rows
         )
         store = SnapshotStore(clock: FakeClock())
@@ -122,6 +141,8 @@ final class UITestingFixture: MonitorService {
     func history(_ request: HistoryRequest) async throws -> [HistorySeries] {
         let date = current.sampledAt
         return request.series.map { series in
+            let power = current.processes.first { $0.processKey.rawValue == series }?.powerMW ?? .unsupported
+            let systemPower = current.system.battery?.systemPowerMW
             let points = stride(from: -600.0, through: 0, by: 5).map { offset in
                 let level: MemoryPressure = (-210.0 ... -190).contains(offset) ? .critical : ((-240.0 ... -160).contains(offset) ? .warning : .normal)
                 let pressureBase: Double = switch level {
@@ -138,7 +159,12 @@ final class UITestingFixture: MonitorService {
                                     diskReadBps: .ok(read), diskWriteBps: .ok(write),
                                     memoryUsedBytes: series == "system" ? .ok(memory) : nil,
                                     memoryPressurePercent: series == "system" ? .ok(pressureBase + 4 * sin(offset / 35)) : nil,
-                                    memoryPressure: series == "system" ? level : nil)
+                                    memoryPressure: series == "system" ? level : nil,
+                                    systemPowerMW: series == "system" ? systemPower.map { metric in
+                                        metric.value.map { .ok($0 + 2500 * sin(offset / 35)) } ?? metric
+                                    } : nil,
+                                    batteryPercent: series == "system" ? current.system.battery?.percent : nil,
+                                    powerMW: series == "system" ? nil : (power.value.map { .ok($0 * (1 + 0.2 * sin(offset / 30))) } ?? power))
             }
             return HistorySeries(series: series, points: points,
                                  gaps: [HistoryGap(from: date.addingTimeInterval(-19), to: date.addingTimeInterval(-6))])

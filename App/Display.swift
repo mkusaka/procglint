@@ -78,12 +78,13 @@ enum Display {
 }
 
 enum ProcessColumn: String, CaseIterable {
-    case name, cpu, footprint, readRate, writeRate, pid, user, cpuTime, rss, readBytes, writtenBytes
+    case name, cpu, power, footprint, readRate, writeRate, pid, user, cpuTime, rss, readBytes, writtenBytes
 
     var title: String {
         switch self {
         case .name: "Name"
         case .cpu: "CPU"
+        case .power: "Power"
         case .footprint: "Memory"
         case .readRate: "Read/s"
         case .writeRate: "Write/s"
@@ -97,7 +98,11 @@ enum ProcessColumn: String, CaseIterable {
     }
 
     var tooltip: String? {
-        self == .footprint ? "Same as Activity Monitor's Memory column (phys_footprint): memory this process is charged for, including compressed and swapped pages. RSS (optional column) counts shared pages and is usually misleading." : nil
+        switch self {
+        case .power: "OS-attributed average power of this process (own processes only). Not Activity Monitor's Energy Impact."
+        case .footprint: "Same as Activity Monitor's Memory column (phys_footprint): memory this process is charged for, including compressed and swapped pages. RSS (optional column) counts shared pages and is usually misleading."
+        default: nil
+        }
     }
 
     var numeric: Bool {
@@ -112,6 +117,7 @@ enum ProcessColumn: String, CaseIterable {
         switch self {
         case .name: .name
         case .cpu: .cpu
+        case .power: .power
         case .footprint: .footprint
         case .readRate: .diskReadBps
         case .writeRate: .diskWriteBps
@@ -128,6 +134,7 @@ enum ProcessColumn: String, CaseIterable {
         case .pid: MetricText(text: String(process.pid), reason: nil)
         case .user: MetricText(text: process.user, reason: nil)
         case .cpu: Display.metric(process.cpuPercent, format: Display.percent)
+        case .power: Display.metric(process.powerMW, format: Display.power)
         case .footprint: Display.metric(process.footprintBytes, format: Display.bytes)
         case .rss: Display.metric(process.rssBytes, format: Display.bytes)
         case .readRate: Display.metric(process.diskReadBps) { Display.bytes($0) + "/s" }

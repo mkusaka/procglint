@@ -10,7 +10,11 @@ struct MemorySummaryPoint: Equatable {
 }
 
 enum SummaryCard: String, CaseIterable, Identifiable {
-    case cpu, memory, pressure, swap, compressed
+    case cpu, memory, pressure, swap, compressed, battery
+
+    static func visible(in header: SnapshotHeader?) -> [Self] {
+        allCases.filter { $0 != .battery || header?.system.battery != nil }
+    }
 
     var id: Self {
         self
@@ -23,16 +27,18 @@ enum SummaryCard: String, CaseIterable, Identifiable {
         case .pressure: "Memory pressure"
         case .swap: "Swap"
         case .compressed: "Compressed"
+        case .battery: "Battery"
         }
     }
 
-    var symbol: String {
+    func symbol(_ header: SnapshotHeader?) -> String {
         switch self {
         case .cpu: "cpu"
         case .memory: "memorychip"
         case .pressure: "gauge.with.dots.needle.50percent"
         case .swap: "arrow.left.arrow.right"
         case .compressed: "arrow.down.right.and.arrow.up.left"
+        case .battery: header?.system.battery.map { BatteryDisplay(battery: $0).symbol } ?? "battery.0"
         }
     }
 
@@ -45,6 +51,7 @@ enum SummaryCard: String, CaseIterable, Identifiable {
         case .pressure: return Display.metric(system.memoryPressurePercent, format: { String(format: "%.0f%%", $0) }).text
         case .swap: return Display.metric(system.swapUsedBytes, format: Display.memoryBytes).text
         case .compressed: return Display.memoryBytes(Double(system.compressedBytes))
+        case .battery: return system.battery.map { Display.metric($0.percent, format: { String(format: "%.0f%%", $0) }).text } ?? "—"
         }
     }
 
@@ -56,6 +63,7 @@ enum SummaryCard: String, CaseIterable, Identifiable {
         case .pressure: return header.system.memoryPressure.value?.rawValue.capitalized ?? "Unavailable"
         case .swap: return Display.metric(header.system.swapUsedBytes, format: Display.memoryBytes).reason ?? "On disk"
         case .compressed: return "In memory"
+        case .battery: return header.system.battery.map { BatteryDisplay(battery: $0).caption } ?? "Unavailable"
         }
     }
 
@@ -66,6 +74,7 @@ enum SummaryCard: String, CaseIterable, Identifiable {
         case .pressure: .pressure
         case .swap: .swap
         case .compressed: .compressed
+        case .battery: .systemPower
         }
     }
 }

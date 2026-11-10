@@ -26,7 +26,11 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
     {
         self.bundle = bundle
         let arguments = ProcessInfo.processInfo.arguments
-        let fixture = try arguments.contains("--ui-testing") ? UITestingFixture(unregistered: arguments.contains("--ui-testing-unregistered"), requiresApproval: arguments.contains("--ui-testing-requires-approval")) : nil
+        let battery = UITestingFixture.BatteryState(rawValue: ProcessInfo.processInfo.environment["PROCGLINT_UI_TEST_BATTERY"] ?? "charging") ?? .charging
+        let fixture = try arguments.contains("--ui-testing") ? UITestingFixture(
+            unregistered: arguments.contains("--ui-testing-unregistered"),
+            requiresApproval: arguments.contains("--ui-testing-requires-approval"), battery: battery
+        ) : nil
         uiTestingFixture = fixture
         let status: @MainActor () -> String
         let register: @MainActor () throws -> Void
@@ -87,7 +91,7 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         }
         if uiTestingFixture != nil, ProcessInfo.processInfo.arguments.contains("--ui-testing-selected") {
-            main.window?.setContentSize(NSSize(width: 1360, height: 1100))
+            main.window?.setContentSize(NSSize(width: 1360, height: 1260))
             main.window?.center()
         }
         if uiTestingFixture != nil, let search = ProcessInfo.processInfo.environment["PROCGLINT_UI_TEST_SEARCH"] {

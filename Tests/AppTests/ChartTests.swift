@@ -225,6 +225,6 @@ import Testing
         #expect(controller.splitController.splitViewItems.last?.isCollapsed == true)
         controller.toggleInspector()
         #expect(controller.splitController.splitViewItems.last?.isCollapsed == false)
-        #expect(SummaryCard.allCases.map(\.title) == ["CPU", "Memory used / physical", "Memory pressure", "Swap", "Compressed"])
+        #expect(SummaryCard.visible(in: model.header).map(\.title) == ["CPU", "Memory used / physical", "Memory pressure", "Swap", "Compressed"])
     }
 }

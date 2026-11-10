@@ -9,6 +9,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     let processScroll = NSScrollView()
     let footer = NSStackView()
     let agentBannerContainer = NSView()
+    private var headerHeight: NSLayoutConstraint?
     private lazy var bannerHeight = agentBannerContainer.heightAnchor.constraint(equalToConstant: 0)
     let dataSource: ProcessTableDataSource
     let search = NSSearchField()
@@ -160,7 +161,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         splitController.addSplitViewItem(inspectorItem)
         let header = NSHostingView(rootView: MonitorHeader(model: model))
         header.sizingOptions = []
-        header.heightAnchor.constraint(equalToConstant: 178).isActive = true
+        headerHeight = header.heightAnchor.constraint(equalToConstant: 178)
+        headerHeight?.isActive = true
         let rootController = NSViewController()
         rootController.addChild(splitController)
         let root = NSView(frame: window.contentLayoutRect)
@@ -275,6 +277,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     func render() {
+        headerHeight?.constant = model.header?.system.battery == nil ? 178 : 216
         window?.subtitle = model.agentReachable ? "Agent · \(model.header?.status.rawValue ?? "unavailable")" : "Agent unavailable"
         let setup = AgentSetup(status: model.registrationStatus(), reachable: model.agentReachable)
         agentBanner.isHidden = !setup.showsBanner

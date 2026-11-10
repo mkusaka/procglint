@@ -6,7 +6,7 @@ struct MonitorHeader: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ForEach(SummaryCard.allCases) { card in
+            ForEach(SummaryCard.visible(in: model.header)) { card in
                 MetricCard(model: model, card: card)
             }
         }
@@ -21,13 +21,27 @@ private struct MetricCard: View {
     let model: MonitorViewModel
     let card: SummaryCard
 
+    private var battery: BatteryDisplay? {
+        guard card == .battery, model.header?.status != .unavailable else { return nil }
+        return model.header?.system.battery.map { BatteryDisplay(battery: $0) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(card.title, systemImage: card.symbol)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            Label {
+                Text(card.title)
+            } icon: {
+                HStack(spacing: 2) {
+                    Image(systemName: card.symbol(model.header))
+                    if battery?.battery.isCharging == true {
+                        Image(systemName: "bolt.fill")
+                    }
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
             Text(card.value(model.header))
                 .accessibilityIdentifier("summaryValue.\(card.rawValue)")
                 .font(.system(size: 23, weight: .semibold, design: .rounded).monospacedDigit())
@@ -45,15 +59,25 @@ private struct MetricCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .frame(height: 18)
             }
+            if let battery {
+                Text(battery.power)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                    .accessibilityIdentifier("batteryPower")
+            }
+            Spacer(minLength: 0)
             HistoryChart(model: model, kind: card.chart, compact: true)
         }
         .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary, lineWidth: 0.5))
-        .help([Display.summaryTooltip(model.header), model.message].filter { !$0.isEmpty }.joined(separator: "\n"))
+        .help([battery?.tooltip ?? Display.summaryTooltip(model.header), model.message].filter { !$0.isEmpty }.joined(separator: "\n"))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("summaryCard.\(card.rawValue)")
     }
@@ -177,6 +201,9 @@ private struct InspectorHistory: View {
             HistoryChart(model: model, kind: .memory)
             Text("Attributed disk I/O per second").font(.headline)
             HistoryChart(model: model, kind: .io)
+            Text("Power · OS-attributed").font(.headline)
+            HistoryChart(model: model, kind: .power)
+                .help(ProcessColumn.power.tooltip ?? "")
         }
     }
 }

@@ -21,8 +21,8 @@ struct ModernPresentationTests {
         defer { fixture.cleanUp() }
         let model = try MonitorViewModel(service: fixture, preferences: prefs)
         await model.setVisibility(window: true, menuBar: false)
-        #expect(SummaryCard.allCases.map { $0.value(model.header) } == ["25.0%", "4 GB", "39%", "1 GB", "512 MB"])
-        #expect(SummaryCard.allCases.map { $0.caption(model.header) } == ["Across all cores", "of 8 GB", "Normal", "On disk", "In memory"])
+        #expect(SummaryCard.allCases.map { $0.value(model.header) } == ["25.0%", "4 GB", "39%", "1 GB", "512 MB", "69%"])
+        #expect(SummaryCard.allCases.map { $0.caption(model.header) } == ["Across all cores", "of 8 GB", "Normal", "On disk", "In memory", "Charging · 1:53 to full"])
         var header = try #require(model.header)
         header.system.cpuPercent = .warmingUp
         header.system.swapUsedBytes = .permissionDenied
