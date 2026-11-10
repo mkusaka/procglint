@@ -26,6 +26,7 @@ The screenshots use isolated demonstration data, not a live process list.
 - Process CPU, cumulative CPU time, Memory (footprint) and optional RSS, attributed disk I/O counters/rates, OS-attributed power, PID and owner; system CPU, memory pressure, swap usage and defined VM memory statistics.
 - Battery charge, charging/time-remaining state, system power and discharge rate, with health/cycle count in the tooltip. Battery and process power history share the charts’ hover cursor; desktop Macs show no Battery card.
 - Search, filter, sort and choose columns; inspect details, pin processes and read bounded history with explicit gaps for unobserved time.
+- Copy List / Copy details put Markdown on the clipboard for pasting into an agent; command lines only when enabled.
 - Optional CPU/memory menu-bar display. Default updates are 5 seconds for the window and 10 seconds for the menu bar; no periodic sampling without an active lease.
 - Shared stdio MCP bridge: read-only, own processes, no paths by default; opt-in bounded observations, configuration and termination.
 - Confirmed own-process TERM/KILL with short-lived, single-use tickets, identity revalidation and a bounded audit log. No automatic escalation.

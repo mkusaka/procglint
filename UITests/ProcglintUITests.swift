@@ -31,6 +31,37 @@ final class ProcglintUITests: XCTestCase {
         }
     }
 
+    func testCopyListAndDetailsAsMarkdown() throws {
+        try withApp { app, _ in
+            let window = app.windows["mainWindow"]
+            XCTAssertTrue(window.waitForExistence(timeout: 10))
+            expectValue(window.staticTexts["processCount"], equals: "20 of 20 processes")
+            NSPasteboard.general.clearContents()
+            window.buttons["copyList"].click()
+            let list = try XCTUnwrap(NSPasteboard.general.string(forType: .string))
+            XCTAssertTrue(list.contains("| Name |"))
+            XCTAssertTrue(list.contains("Alpha Worker"))
+            XCTAssertFalse(window.buttons["copyDetails"].exists)
+            app.staticTexts["process.4116.name"].click()
+            app.typeKey("c", modifierFlags: .command)
+            let selected = try XCTUnwrap(NSPasteboard.general.string(forType: .string))
+            XCTAssertTrue(selected.contains("1 of 20 processes") && selected.contains("Worker 16"))
+            XCTAssertFalse(selected.contains("Alpha Worker"))
+            window.buttons["copyList"].click()
+            let all = try XCTUnwrap(NSPasteboard.general.string(forType: .string))
+            XCTAssertTrue(all.contains("20 of 20 processes") && all.contains("Alpha Worker"))
+            search("4100", in: app)
+            app.staticTexts["process.4100.name"].click()
+            let detailsButton = window.buttons["copyDetails"]
+            XCTAssertTrue(detailsButton.waitForExistence(timeout: 5))
+            detailsButton.click()
+            let details = try XCTUnwrap(NSPasteboard.general.string(forType: .string))
+            XCTAssertTrue(details.contains("Alpha Worker"))
+            XCTAssertTrue(details.contains("## Identity"))
+            XCTAssertFalse(details.contains("ui-secret"))
+        }
+    }
+
     func testHoverSharesCursorReadoutAcrossHeaderAndInspectorCharts() throws {
         try withApp { app, _ in
             search("4100", in: app)

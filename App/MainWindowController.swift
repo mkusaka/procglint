@@ -3,7 +3,7 @@ import ProcglintCore
 import SwiftUI
 
 @MainActor
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSToolbarDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearchFieldDelegate, NSToolbarDelegate, NSUserInterfaceValidations {
     let model: MonitorViewModel
     let table = NSTableView()
     let processScroll = NSScrollView()
@@ -27,6 +27,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     var visibilityChanged: (@MainActor () -> Void)?
     var focusChanged: (@MainActor () -> Void)?
     private var renderedRows: [ProcessSample] = []
+    private var copied = false
+    private var copyFeedback: Task<Void, Never>?
 
     init(model: MonitorViewModel, register: @escaping @MainActor () -> Void = {},
          openLoginItems: @escaping @MainActor () -> Void = {}, registrationError: @escaping @MainActor () -> String = { "" })
@@ -90,7 +92,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         table.style = .fullWidth
         table.rowSizeStyle = .default
         table.usesAlternatingRowBackgroundColors = true
-        table.allowsMultipleSelection = false
+        table.allowsMultipleSelection = true
         table.columnAutoresizingStyle = .noColumnAutoresizing
         table.setAccessibilityLabel("Processes")
         let columnMenu = NSMenu(title: "Columns")
@@ -149,7 +151,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         let content = NSSplitViewItem(viewController: listController)
         content.minimumThickness = 560
         let inspectorController = NSViewController()
-        let inspector = NSHostingView(rootView: ProcessInspector(model: model, terminate: { [weak self] in self?.terminateProcess(signal: $0) }))
+        let inspector = NSHostingView(rootView: ProcessInspector(model: model, terminate: { [weak self] in self?.terminateProcess(signal: $0) },
+                                                                 copyDetails: { [weak self] in self?.copyDetails() }))
         inspector.sizingOptions = []
         inspectorController.view = inspector
         let inspectorItem = NSSplitViewItem(inspectorWithViewController: inspectorController)
@@ -198,7 +201,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
     }
 
     func toolbarDefaultItemIdentifiers(_: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.init("filter"), .flexibleSpace, .init("search"), .init("inspector")]
+        [.init("filter"), .flexibleSpace, .init("search"), .init("copyList"), .init("inspector")]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -215,6 +218,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
         if identifier.rawValue == "filter" {
             item.label = "Process filter"
             item.view = filter
+        } else if identifier.rawValue == "copyList" {
+            item.label = "Copy List"
+            item.toolTip = "Copy all shown processes as Markdown"
+            let button = NSButton(image: NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy List")!, target: self, action: #selector(copyList))
+            button.bezelStyle = .texturedRounded
+            button.setAccessibilityIdentifier("copyList")
+            item.view = button
         } else if identifier.rawValue == "inspector" {
             item.label = "Inspector"
             item.toolTip = "Show or hide inspector"
@@ -278,7 +288,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     func render() {
         headerHeight?.constant = model.header?.system.battery == nil ? 178 : 216
-        window?.subtitle = model.agentReachable ? "Agent · \(model.header?.status.rawValue ?? "unavailable")" : "Agent unavailable"
+        window?.subtitle = copied ? "Copied" : (model.agentReachable ? "Agent · \(model.header?.status.rawValue ?? "unavailable")" : "Agent unavailable")
         let setup = AgentSetup(status: model.registrationStatus(), reachable: model.agentReachable)
         agentBanner.isHidden = !setup.showsBanner
         agentBannerContainer.isHidden = !setup.showsBanner
@@ -315,6 +325,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
 
     @objc private func more() {
         Task { await model.loadMore() }
+    }
+
+    @objc private func copyList() {
+        copyRows(nil)
+    }
+
+    @objc func copy(_: Any?) {
+        guard !table.selectedRowIndexes.isEmpty else { return }
+        copyRows(table.selectedRowIndexes)
+    }
+
+    func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        item.action != #selector(copy(_:)) || (!table.isHidden && !table.selectedRowIndexes.isEmpty)
+    }
+
+    private func copyRows(_ selectedRows: IndexSet?) {
+        guard !table.isHidden else { return }
+        let columns = table.tableColumns.filter { !$0.isHidden }.compactMap { ProcessColumn(rawValue: $0.identifier.rawValue) }
+        copyText(CopyText.list(rows: model.rows, columns: columns, header: model.header, totalMatched: model.totalMatched,
+                               query: model.displayedQuery ?? model.query, selectedRows: selectedRows))
+    }
+
+    private func copyDetails() {
+        guard let process = model.detail else { return }
+        let window = ChartGeometry.historyWindow(endingAt: model.header?.sampledAt ?? model.history?.points.last?.t, minutes: model.policy.historyMinutes)
+        copyText(CopyText.details(process: process, permissions: model.permissions, history: model.history, window: window))
+    }
+
+    private func copyText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copyFeedback?.cancel()
+        copied = true
+        render()
+        copyFeedback = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(1500)) } catch { return }
+            self?.copied = false
+            self?.render()
+        }
     }
 
     @objc private func toggleColumn(_ item: NSMenuItem) {

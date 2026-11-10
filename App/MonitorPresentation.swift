@@ -79,25 +79,45 @@ enum SummaryCard: String, CaseIterable, Identifiable {
     }
 }
 
+extension Display {
+    static func identity(_ detail: ProcessSample) -> String {
+        "\(detail.name)\nPID \(detail.pid) · \(detail.user) (uid \(detail.uid))\nKey: \(detail.processKey.rawValue)\nStarted: \(detail.startTime.formatted(date: .abbreviated, time: .standard))\nStatus: \(detail.status.rawValue)"
+    }
+
+    static func path(_ detail: ProcessSample, permissions: PermissionSet) -> String {
+        permissions.contains(.includePaths) ? "Path: \(detail.path ?? "— (not available)")" : "Path: — (permission_denied; enable include_paths in Settings)"
+    }
+
+    static func commandLine(_ detail: ProcessSample, permissions: PermissionSet) -> String {
+        permissions.contains(.includeCommandLines) ? "Command: \(detail.commandLine?.displayText ?? "— (unsupported)")" : "Command lines hidden — enable in Settings"
+    }
+
+    static func cwd(_ detail: ProcessSample, permissions: PermissionSet) -> String {
+        guard permissions.contains(.includeCommandLines) else { return "" }
+        return "Working directory: \(detail.cwd?.value ?? "— (\(detail.cwd?.status.rawValue ?? "unsupported"))")"
+    }
+
+    static func lineageStatus(_ detail: ProcessSample) -> String {
+        let incomplete = detail.ancestorsIncomplete == true ? " · Parent chain incomplete" : ""
+        return "Direct children: \(detail.childrenCount.map(String.init) ?? "—")\(incomplete)"
+    }
+}
+
 extension MonitorViewModel {
     var identityText: String {
-        guard let detail else { return "Select a process" }
-        return "\(detail.name)\nPID \(detail.pid) · \(detail.user) (uid \(detail.uid))\nKey: \(detail.processKey.rawValue)\nStarted: \(detail.startTime.formatted(date: .abbreviated, time: .standard))\nStatus: \(detail.status.rawValue)"
+        detail.map(Display.identity) ?? "Select a process"
     }
 
     var pathText: String {
-        guard let detail else { return "" }
-        return permissions.contains(.includePaths) ? "Path: \(detail.path ?? "— (not available)")" : "Path: — (permission_denied; enable include_paths in Settings)"
+        detail.map { Display.path($0, permissions: permissions) } ?? ""
     }
 
     var commandLineText: String {
-        guard let detail else { return "" }
-        return permissions.contains(.includeCommandLines) ? "Command: \(detail.commandLine?.displayText ?? "— (unsupported)")" : "Command lines hidden — enable in Settings"
+        detail.map { Display.commandLine($0, permissions: permissions) } ?? ""
     }
 
     var cwdText: String {
-        guard let detail, permissions.contains(.includeCommandLines) else { return "" }
-        return "Working directory: \(detail.cwd?.value ?? "— (\(detail.cwd?.status.rawValue ?? "unsupported"))")"
+        detail.map { Display.cwd($0, permissions: permissions) } ?? ""
     }
 
     var rootAncestors: [ProcessAncestor] {
@@ -105,9 +125,7 @@ extension MonitorViewModel {
     }
 
     var lineageStatusText: String {
-        guard let detail else { return "" }
-        let incomplete = detail.ancestorsIncomplete == true ? " · Parent chain incomplete" : ""
-        return "Direct children: \(detail.childrenCount.map(String.init) ?? "—")\(incomplete)"
+        detail.map(Display.lineageStatus) ?? ""
     }
 
     func canSelectAncestor(_ ancestor: ProcessAncestor) -> Bool {

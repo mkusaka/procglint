@@ -86,12 +86,13 @@ private struct MetricCard: View {
 struct ProcessInspector: View {
     let model: MonitorViewModel
     let terminate: (TerminationSignal) -> Void
+    let copyDetails: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    InspectorIdentity(model: model)
+                    InspectorIdentity(model: model, copyDetails: copyDetails)
                     if model.selectedKey != nil {
                         InspectorLaunchDetails(model: model)
                         InspectorHistory(model: model)
@@ -115,11 +116,24 @@ struct ProcessInspector: View {
 
 private struct InspectorIdentity: View {
     let model: MonitorViewModel
+    let copyDetails: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Identity", systemImage: "app.badge")
-                .font(.headline)
+            HStack {
+                Label("Identity", systemImage: "app.badge")
+                    .font(.headline)
+                Spacer()
+                if model.selectedKey != nil {
+                    Button(action: copyDetails) {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Copy details")
+                    .accessibilityLabel("Copy details")
+                    .accessibilityIdentifier("copyDetails")
+                }
+            }
             Text(model.identityText)
                 .textSelection(.enabled)
                 .font(.callout)

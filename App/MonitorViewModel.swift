@@ -69,7 +69,7 @@ final class MonitorViewModel {
     private var historyLeaseMessage = ""
     private var agentInstanceID: String?
     private var selectionRevision = 0
-    private var displayedQuery: ProcessQuery?
+    private(set) var displayedQuery: ProcessQuery?
     private var terminationMessage = ""
     private var terminationTarget: ProcessKey?
     var message = ""

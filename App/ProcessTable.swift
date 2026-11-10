@@ -7,6 +7,7 @@ final class ProcessTableDataSource: NSObject, NSTableViewDataSource, NSTableView
     var selectionChanged: (@MainActor () -> Void)?
     var queryChanged: (@MainActor () -> Void)?
     private var restoringSelection = false
+    private var selectedKeys: Set<ProcessKey> = []
 
     init(model: MonitorViewModel) {
         self.model = model
@@ -61,20 +62,20 @@ final class ProcessTableDataSource: NSObject, NSTableViewDataSource, NSTableView
     func restoreSelection(_ tableView: NSTableView, scrollToSelection: Bool = true) {
         restoringSelection = true
         defer { restoringSelection = false }
-        if let index = model.rows.firstIndex(where: { $0.processKey == model.selectedKey }) {
-            if tableView.selectedRow != index {
-                tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-                if scrollToSelection {
-                    tableView.scrollRowToVisible(index)
-                }
+        let keys: Set<ProcessKey> = model.selectedKey.map { selectedKeys.contains($0) ? selectedKeys : [$0] } ?? []
+        let indexes = IndexSet(model.rows.indices.filter { keys.contains(model.rows[$0].processKey) })
+        selectedKeys = Set(indexes.map { model.rows[$0].processKey })
+        if tableView.selectedRowIndexes != indexes {
+            tableView.selectRowIndexes(indexes, byExtendingSelection: false)
+            if scrollToSelection, let index = indexes.first {
+                tableView.scrollRowToVisible(index)
             }
-        } else {
-            tableView.deselectAll(nil)
         }
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard !restoringSelection, let table = notification.object as? NSTableView else { return }
+        selectedKeys = Set(table.selectedRowIndexes.filter { model.rows.indices.contains($0) }.map { model.rows[$0].processKey })
         model.select(model.rows.indices.contains(table.selectedRow) ? model.rows[table.selectedRow].processKey : nil)
         selectionChanged?()
     }
