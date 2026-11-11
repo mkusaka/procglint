@@ -204,6 +204,12 @@ public struct SnapshotStore: Sendable {
         switch sort {
         case .cpu: process.cpuPercent
         case .power: process.powerMW
+        case .network:
+            if let receive = process.networkReceiveBps.value, let send = process.networkSendBps.value {
+                .ok(receive + send)
+            } else {
+                .unsupported
+            }
         case .footprint: process.footprintBytes
         case .rss: process.rssBytes
         case .diskReadBps: process.diskReadBps

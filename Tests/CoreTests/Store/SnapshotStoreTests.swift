@@ -85,6 +85,10 @@ import Testing
     low.powerMW = .ok(1000)
     high.powerMW = .ok(2000)
     missing.powerMW = .unsupported
+    low.networkReceiveBps = .ok(1)
+    low.networkSendBps = .ok(1)
+    high.networkReceiveBps = .ok(2)
+    high.networkSendBps = .ok(2)
     store.insert(storeSnapshot(processes: [missing, high, low]))
     for sort in ProcessSort.allCases {
         let ascending = try store.listProcesses(ProcessQuery(sort: sort, order: .asc), scope: AccessScope())

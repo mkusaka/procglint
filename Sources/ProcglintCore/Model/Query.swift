@@ -4,7 +4,7 @@ public enum ProcessFilter: String, Sendable, Codable, CaseIterable { case all, m
 public enum SortOrder: String, Sendable, Codable, CaseIterable { case asc, desc }
 
 public enum ProcessSort: String, Sendable, Codable, CaseIterable {
-    case cpu, footprint, rss, power
+    case cpu, footprint, rss, power, network
     case diskReadBps = "disk_read_bps"
     case diskWriteBps = "disk_write_bps"
     case cpuTime = "cpu_time"
@@ -25,6 +25,10 @@ public enum ProcessField: String, Sendable, Codable, CaseIterable {
     case diskWrittenBytes = "disk_written_bytes"
     case diskReadBps = "disk_read_bps"
     case diskWriteBps = "disk_write_bps"
+    case networkReceiveBps = "network_receive_bps"
+    case networkSendBps = "network_send_bps"
+    case networkReceivedBytes = "network_received_bytes"
+    case networkSentBytes = "network_sent_bytes"
     case startTime = "start_time"
     case path
 }

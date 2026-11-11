@@ -28,6 +28,9 @@ public actor Sampler {
     private let agentInstanceID: String
     private let agentUID: UInt32
     private let bootSessionID: String
+    private let networkSource: (any NetworkSource)?
+    private var interfaceNetwork = InterfaceNetworkRates()
+    private var processNetwork = ProcessNetworkRates()
     private var sequence: UInt64 = 0
     private var previousTime: UInt64?
     private var previousCPU: RawCPUTicks?
@@ -39,17 +42,20 @@ public actor Sampler {
     private var nextUsers: [UInt32: String] = [:]
 
     public init(source: any ProcessSource, clock: any MonotonicClock,
-                agentInstanceID: String = UUID().uuidString, agentUID: UInt32 = getuid()) throws
+                agentInstanceID: String = UUID().uuidString, agentUID: UInt32 = getuid(),
+                networkSource: (any NetworkSource)? = nil) throws
     {
         self.source = source
         self.clock = clock
         self.agentInstanceID = agentInstanceID
         self.agentUID = agentUID
+        self.networkSource = networkSource ?? (source is DarwinProcessSource ? DarwinNetworkSource() : nil)
         bootSessionID = try source.bootSessionID()
     }
 
-    /// No suspension inside a sweep: all PIDs and the baseline commit share the actor's serial executor.
+    /// Network queries finish before the non-suspending PID sweep and baseline commit.
     public func sample() async throws -> Snapshot {
+        let network = await networkSource?.counters() ?? NetworkCounters()
         let now = clock.now
         let sampledAt = Date()
         let census: [SamplingProcess]?
@@ -128,6 +134,10 @@ public actor Sampler {
             }
         }
 
+        let networkRates = interfaceNetwork.read(network.interfaces, now: now)
+        if census != nil {
+            processNetwork.read(network, processes: &processes, now: now)
+        }
         let interval = previousTime.flatMap { now >= $0 ? now - $0 : nil }
         let page = source.pageSize
         let system = SystemMetrics(
@@ -137,7 +147,8 @@ public actor Sampler {
             activeBytes: vm.activePages * page, inactiveBytes: vm.inactivePages * page, freeBytes: vm.freePages * page,
             memoryPressure: memory.pressure, memoryPressurePercent: memory.pressurePercent,
             swapUsedBytes: memory.swapUsed, swapTotalBytes: memory.swapTotal,
-            battery: (source as? any SamplingProcessSource)?.systemBattery()
+            battery: (source as? any SamplingProcessSource)?.systemBattery(),
+            networkReceiveBps: networkRates.receive, networkSendBps: networkRates.send
         )
         // A failed census is not an empty successful sweep: keep baselines and live identities.
         var status: SnapshotStatus = .unavailable

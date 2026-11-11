@@ -124,9 +124,9 @@ struct MCPTools: Sendable {
         policyInput.removeValue(forKey: "revision")
         policyInput["expected_revision"] = Schema.integer(0)
         return [
-            tool("get_snapshot", "Recommended entry point: system battery/power, memory pressure, swap, CPU and top processes. Sort power ranks power_mw (OS-attributed process energy, not a battery-drain share). Memory is footprint_bytes, the Activity Monitor Memory column. Process CPU uses 100% per core; missing metrics are not zero.",
+            tool("get_snapshot", "Recommended entry point: system network bytes/s (up non-loopback interfaces), battery/power, memory pressure, swap, CPU and top processes. Sort network ranks receive+send bytes/s. Per-process TCP/UDP bytes use private NetworkStatistics; unavailable metrics are unsupported, not zero. No endpoint data is exposed. Sort power ranks power_mw (OS-attributed process energy, not a battery-drain share). Memory is footprint_bytes, the Activity Monitor Memory column. Process CPU uses 100% per core; missing metrics are not zero.",
                  Schema.object(["top": Schema.integer(1, 200), "sort": sorts]), Schema.snapshot),
-            tool("list_processes", "Search, sort and page processes. Default filter mine, sort cpu desc, limit 50 (max 200). Cursor is opaque and bound to one snapshot; always includes process_key.",
+            tool("list_processes", "Search, sort and page processes, including network_receive_bps, network_send_bps and cumulative network_received_bytes/network_sent_bytes (live socket totals plus observed closed sockets, not process-lifetime totals). Sort network ranks receive+send bytes/s; missing foreign-process metrics are permission_denied, never zero. Default filter mine, sort cpu desc, limit 50 (max 200). Cursor is opaque and bound to one snapshot; always includes process_key.",
                  Schema.object(["search": Schema.nullable(Schema.text), "filter": Schema.strings(ProcessFilter.allCases.map(\.rawValue)),
                                 "sort": sorts, "order": Schema.strings(SortOrder.allCases.map(\.rawValue)),
                                 "limit": Schema.integer(1, 200), "cursor": Schema.nullable(Schema.string()),
@@ -136,7 +136,7 @@ struct MCPTools: Sendable {
             tool("get_history", "Read retained system, process or observation history. Selectors are system, opaque process_keys or observation_ids. No backfill; gaps are not zero. Use since to reduce output.",
                  Schema.object(["series": Schema.array(Schema.string(), minimum: 1), "since": Schema.nullable(Schema.date)], required: ["series"]),
                  Schema.object(["series": Schema.array(Schema.history)], required: ["series"])),
-            tool("get_monitor_status", "Inspect agent overhead, sampling, coverage, connected clients, current sampling policy and system battery/power and memory pressure/swap. system is null if the shared snapshot cannot be read.",
+            tool("get_monitor_status", "Inspect agent overhead, sampling, coverage, connected clients, current sampling policy and system network bytes/s, battery/power and memory pressure/swap. system is null if the shared snapshot cannot be read.",
                  Schema.object([:]), Schema.monitorStatus),
             tool("start_observation", "Start a bounded observation immediately; read results with get_history. No auto-renewal. Duration 1000–60000 ms, up to 16 processes, intervals 1/2/5/10 seconds.",
                  Schema.object(["interval_ms": interval, "duration_ms": Schema.integer(1000, 60000),

@@ -123,6 +123,18 @@ Command-line arguments and working directories are exposed only in lazy per-proc
 
 Ancestors and child counts are not permission-gated and are computed only on detail requests from the current census. Command lines come from `KERN_PROCARGS2` argc/argv only (the environment block is never returned); cwd from `PROC_PIDVNODEPATHINFO`. Other users' processes / access denial → `permission_denied`; vanished or reused identity → `exited`; malformed → `unsupported`; values are non-null iff status is ok. Caps: 64 arguments, 4 KiB UTF-8 per argument, 16 KiB total, on character boundaries (`truncated: true`). Agent-side redaction (before truncation and transmission) replaces secret-like values with `<redacted>`: flag/`KEY=value` values whose name matches (case-insensitive) token|secret|password|passwd|pwd|apikey|api-key|api_key|auth|credential|key (ignoring keyboard, keymap, monkey), separate-value flags, URL userinfo/passwords and Bearer credentials. Redaction is best-effort. Decoders treat absent detail fields as nil.
 
+## Network usage
+
+- `SystemMetrics` adds `network_receive_bps` and `network_send_bps` (`Metric`, bytes per second). The agent reads 64-bit `NET_RT_IFLIST2` / `if_msghdr2` counters and sums deltas over interfaces that are up and not loopback. The first sample or a counter reset is `warming_up`; unavailable interface data is `unsupported`. Newly appearing interfaces establish a baseline without backfill. Disappearing interfaces never produce negative rates.
+- `ProcessSample` adds `network_receive_bps`, `network_send_bps`, `network_received_bytes`, and `network_sent_bytes` (all `Metric`; byte counts are JSON numbers). Cumulative values are live socket counters plus bytes retained from observed closed sources, not complete process-lifetime totals. Rates use cumulative deltas over actual monotonic intervals; the first process observation or a cumulative reset is `warming_up`. State is keyed by PID and process start time and discarded when that identity exits.
+- Per-process TCP/UDP bytes use the private NetworkStatistics.framework, loaded at runtime with `dlopen` / `dlsym`; there is no link-time dependency. Failure to load the framework, resolve any required symbol, create the manager or enable its providers leaves per-process network metrics `unsupported` without disabling other metrics. A query that exceeds 250 ms returns `stale`.
+- An unreported process owned by another user has `permission_denied`, never a fabricated zero. Reported foreign-process data remains subject to the existing `include_system` scope. After a successful query, an own process with no reported sources has zero cumulative bytes; its first rate remains `warming_up`.
+- The manager lives with the sampler. Counts and descriptions are queried for each shared collection; new-source descriptions are also queried when sources arrive so short-lived sources can be attributed. Clients never create independent collectors.
+- Only PID, process start time and byte counters enter network aggregation. Addresses, ports, interface names and hostnames from source descriptions are never retained, logged or exposed.
+- Snapshot decoders treat absent network fields as `unsupported`. `HistoryPoint` adds optional `network_receive_bps` and `network_send_bps` Metrics for both system and tracked process series; absent history fields decode as nil.
+- Sort key `network` ranks the sum of receive and send bytes/s. Either direction missing makes the combined sort value missing; missing values sort last in both orders. The four process network fields are available to `ProcessQuery.fields`.
+- MCP snapshot, process, history and monitor-status schemas expose the corresponding fields. CLI `export snapshot --sort network` supports network sorting; snapshot/history CSV exports include network columns, and `status` / `show` print receive/send rates using decimal B/s, KB/s and MB/s.
+
 ## Queries
 
 `ProcessQuery`:
@@ -131,7 +143,7 @@ Ancestors and child counts are not permission-gated and are computed only on det
 |---|---|---|
 | `search` | null | Case-insensitive name substring, or exact PID if numeric. |
 | `filter` | `mine` for MCP, `all` for GUI | `all | mine | pinned` (`all` limited by scope) |
-| `sort` | `cpu` | `cpu | footprint | rss | disk_read_bps | disk_write_bps | cpu_time | pid | name` |
+| `sort` | `cpu` | `cpu | footprint | rss | power | network | disk_read_bps | disk_write_bps | cpu_time | pid | name` |
 | `order` | `desc` | `asc | desc` |
 | `limit` | 50 | 1…200 |
 | `cursor` | null | Opaque, bound to one `snapshot_id`. Paging never mixes snapshots. Expired/foreign cursor → `invalid_cursor`. |
