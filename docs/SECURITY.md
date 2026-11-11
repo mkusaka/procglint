@@ -55,9 +55,17 @@ Use Settings to change permissions and policy rather than writing malformed seri
 
 The bridge's tool list reflects launch flags only; the agent is the final authority on reads and mutations. `--include-system` allows reading other users' processes only where the OS permits it, never terminating them. `--include-paths` allows lazy executable-path retrieval, not arbitrary file reads. Filtered response caches are keyed by `(snapshot_id, scope)` so different process/path scopes do not share filtered results.
 
-Never exposed through procglint: **environment variables or process memory contents**. Command-line arguments and working directories are opt-in (`include_command_lines`, default off), limited to the user's own processes by the OS, capped, and redacted best-effort by the agent before leaving it (see `docs/SPEC.md`). There is no shell execution, arbitrary signal API, process-group operation, negative-PID signaling or name-based termination. It does not collect GPU, temperature, per-process network traffic or a replacement for Apple's Energy Impact.
+Never exposed through procglint: **environment variables or process memory contents**. Command-line arguments and working directories are opt-in (`include_command_lines`, default off), limited to the user's own processes by the OS, capped, and redacted best-effort by the agent before leaving it (see `docs/SPEC.md`). There is no shell execution, arbitrary signal API, process-group operation, negative-PID signaling or name-based termination. It does not collect GPU, temperature or a replacement for Apple's Energy Impact.
 
 History is in memory and bounded (default 10 minutes, 600 points per series, 16 process series). Only pinned, observed, or GUI-selected processes get process history; selection owns tracking while the GUI window lease is active. A disconnected client loses its leases and observations; retained history can remain until its retention window expires or the agent exits. Settings and the bounded termination audit log are persistent. CLI exports or data copied to an MCP host are outside that in-memory retention policy.
+
+## Network privacy
+
+System network rates use public 64-bit interface counters. Per-process TCP/UDP byte counts use the private NetworkStatistics.framework, loaded only at runtime by the agent. Only PID and receive/send byte counters are extracted from source dictionaries; process start time is read separately to guard against PID reuse.
+
+Addresses, ports, interface names and hostnames from source descriptions are never copied into procglint aggregation state, snapshots, history, logs, IPC responses, CLI exports or MCP output. Closed-source state retains only process identity and cumulative bytes and is dropped when the process identity exits.
+
+Existing process scopes still apply. Unreported other-user processes are `permission_denied`, not zero. Missing private framework symbols disable only per-process network metrics (`unsupported`); query timeouts produce `stale`. Private API behavior can change between macOS releases.
 
 ## Termination safeguards
 

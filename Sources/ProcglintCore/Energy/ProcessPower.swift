@@ -1,7 +1,7 @@
 import Foundation
 
 public extension ProcessSample {
-    /// Older agents can remain alive across an upgrade; absent power is not a measured zero.
+    /// Older agents can remain alive across an upgrade; absent power/network metrics are not measured zeros.
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
@@ -28,7 +28,11 @@ public extension ProcessSample {
             ancestors: values.decodeIfPresent([ProcessAncestor].self, forKey: .ancestors),
             ancestorsIncomplete: values.decodeIfPresent(Bool.self, forKey: .ancestorsIncomplete),
             childrenCount: values.decodeIfPresent(Int.self, forKey: .childrenCount),
-            powerMW: values.decodeIfPresent(Metric.self, forKey: .powerMW) ?? .unsupported
+            powerMW: values.decodeIfPresent(Metric.self, forKey: .powerMW) ?? .unsupported,
+            networkReceiveBps: values.decodeIfPresent(Metric.self, forKey: .networkReceiveBps) ?? .unsupported,
+            networkSendBps: values.decodeIfPresent(Metric.self, forKey: .networkSendBps) ?? .unsupported,
+            networkReceivedBytes: values.decodeIfPresent(Metric.self, forKey: .networkReceivedBytes) ?? .unsupported,
+            networkSentBytes: values.decodeIfPresent(Metric.self, forKey: .networkSentBytes) ?? .unsupported
         )
     }
 }

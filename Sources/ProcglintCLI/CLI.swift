@@ -25,7 +25,7 @@ enum CLICommand: Equatable {
            procglint --version
     Exports default to JSON. Snapshot defaults to the top 50 own processes by CPU;
     --all exports every permitted process, paging within one snapshot.
-    Sort keys: cpu, power, footprint, rss, disk_read_bps, disk_write_bps, cpu_time, pid, name.
+    Sort keys: cpu, power, network, footprint, rss, disk_read_bps, disk_write_bps, cpu_time, pid, name.
     History defaults to system. Missing CSV metrics are empty, not zero.
     """
 
@@ -121,7 +121,9 @@ func showProcess(service: any MonitorService, pid: Int32) async throws -> Proces
 func processSummary(_ sample: ProcessSample) -> String {
     let power = sample.powerMW.value.map { String(format: "%.1f W", locale: Locale(identifier: "en_US_POSIX"), $0 / 1000) }
         ?? "unavailable (\(sample.powerMW.status.rawValue))"
-    var lines = ["\(sample.name) (\(sample.pid))", "Power: \(power)", "Path: \(sample.path ?? "—")", "Launched by (root first):"]
+    var lines = ["\(sample.name) (\(sample.pid))", "Power: \(power)",
+                 networkSummary(receive: sample.networkReceiveBps, send: sample.networkSendBps),
+                 "Path: \(sample.path ?? "—")", "Launched by (root first):"]
     for (index, ancestor) in (sample.ancestors ?? []).reversed().enumerated() {
         lines.append(String(repeating: "  ", count: index + 1) + "\(ancestor.name) (\(ancestor.pid))")
         if let command = ancestor.commandLine {
@@ -196,6 +198,7 @@ func statusSummary(_ status: MonitorStatus, system: SystemMetrics? = nil) -> Str
     Overhead: CPU \(cpu), footprint \(status.agentFootprintBytes) bytes
     \(memorySummary(system))
     \(batterySummary(system?.battery))
+    \(networkSummary(receive: system?.networkReceiveBps ?? .unsupported, send: system?.networkSendBps ?? .unsupported))
     Sampling: \(status.samplingActive ? "active" : "idle"), effective interval \(interval)
     Collections: \(status.collectionsTotal), last \(status.lastCollectionMS) ms, p95 \(status.collectionP95MS) ms
     Coverage: \(coverage.sampled)/\(coverage.enumerated) sampled, \(coverage.permissionDenied) denied, \(coverage.exitedDuringSample) exited
@@ -204,6 +207,17 @@ func statusSummary(_ status: MonitorStatus, system: SystemMetrics? = nil) -> Str
     History: \(status.historyBytes) bytes
     Policy: revision \(status.policy.revision), GUI \(status.policy.guiIntervalMS.milliseconds) ms, menu bar \(status.policy.menuBarIntervalMS.milliseconds) ms, history \(status.policy.historyMinutes) min, max process series \(status.policy.maxProcessSeries)
     """ + "\n"
+}
+
+func networkSummary(receive: Metric, send: Metric) -> String {
+    func rate(_ metric: Metric) -> String {
+        guard let value = metric.value else { return "unavailable (\(metric.status.rawValue))" }
+        let scale: Double = value >= 1_000_000 ? 1_000_000 : (value >= 1000 ? 1000 : 1)
+        let unit = scale == 1_000_000 ? "MB/s" : (scale == 1000 ? "KB/s" : "B/s")
+        let format = scale == 1_000_000 ? "%.1f %@" : "%.0f %@"
+        return String(format: format, locale: Locale(identifier: "en_US_POSIX"), value / scale, unit)
+    }
+    return "Network: ↓ \(rate(receive)) ↑ \(rate(send))"
 }
 
 func batterySummary(_ battery: BatteryMetrics?) -> String {
@@ -336,23 +350,27 @@ func snapshotCSV(_ snapshot: Snapshot) -> String {
                            "coverage_enumerated", "coverage_sampled", "coverage_permission_denied", "coverage_exited_during_sample"]
     let systemHeaders = metricHeaders(["system_cpu_percent"]) + ["physical_memory_bytes", "page_size", "memory_used_bytes", "wired_bytes",
                                                                  "compressed_bytes", "active_bytes", "inactive_bytes", "free_bytes"]
-        + ["memory_pressure", "memory_pressure_status"] + metricHeaders(["swap_used_bytes", "swap_total_bytes"])
+        + ["memory_pressure", "memory_pressure_status"] + metricHeaders(["swap_used_bytes", "swap_total_bytes", "system_network_receive_bps", "system_network_send_bps"])
     let processHeaders = ["process_key", "pid", "ppid", "name", "uid", "user", "is_own", "process_status", "cpu_time_ns", "start_time", "path"]
-    let metrics = ["cpu_percent", "footprint_bytes", "rss_bytes", "disk_read_bytes", "disk_written_bytes", "disk_read_bps", "disk_write_bps", "power_mw"]
+    let metrics = ["cpu_percent", "footprint_bytes", "rss_bytes", "disk_read_bytes", "disk_written_bytes", "disk_read_bps", "disk_write_bps", "power_mw",
+                   "network_receive_bps", "network_send_bps", "network_received_bytes", "network_sent_bytes"]
     let common = [snapshot.agentInstanceID, snapshot.snapshotID, dateCell(snapshot.sampledAt), snapshot.intervalMS.map(String.init) ?? "",
                   String(snapshot.ageMS), snapshot.status.rawValue, String(coverage.enumerated), String(coverage.sampled),
                   String(coverage.permissionDenied), String(coverage.exitedDuringSample)]
     let memory = [system.physicalMemoryBytes, system.pageSize, system.memoryUsedBytes, system.wiredBytes, system.compressedBytes,
                   system.activeBytes, system.inactiveBytes, system.freeBytes].map(String.init)
     let pressure = [system.memoryPressure.value?.rawValue ?? "", system.memoryPressure.status.rawValue]
-    let prefix = common + metricCells(system.cpuPercent) + memory + pressure + metricCells(system.swapUsedBytes) + metricCells(system.swapTotalBytes)
+    let systemMetrics = metricCells(system.swapUsedBytes) + metricCells(system.swapTotalBytes)
+        + metricCells(system.networkReceiveBps) + metricCells(system.networkSendBps)
+    let prefix = common + metricCells(system.cpuPercent) + memory + pressure + systemMetrics
     var output = csvRow(snapshotHeaders + systemHeaders + processHeaders + metricHeaders(metrics))
     for process in snapshot.processes {
         let identity = [process.processKey.rawValue, String(process.pid), process.ppid.map(String.init) ?? "", process.name,
                         String(process.uid), process.user, String(process.isOwn), process.status.rawValue,
                         process.cpuTimeNS.map(String.init) ?? "", dateCell(process.startTime), process.path ?? ""]
         let processMetrics: [Metric?] = [process.cpuPercent, process.footprintBytes, process.rssBytes, process.diskReadBytes,
-                                         process.diskWrittenBytes, process.diskReadBps, process.diskWriteBps, process.powerMW]
+                                         process.diskWrittenBytes, process.diskReadBps, process.diskWriteBps, process.powerMW,
+                                         process.networkReceiveBps, process.networkSendBps, process.networkReceivedBytes, process.networkSentBytes]
         let values: [String] = processMetrics.flatMap { metricCells($0) }
         output += csvRow(prefix + identity + values)
     }
@@ -363,12 +381,13 @@ func snapshotCSV(_ snapshot: Snapshot) -> String {
 }
 
 func historyCSV(_ history: [HistorySeries]) -> String {
-    let names = ["cpu_percent", "footprint_bytes", "disk_read_bps", "disk_write_bps", "memory_used_bytes", "system_power_mw", "battery_percent", "power_mw"]
+    let names = ["cpu_percent", "footprint_bytes", "disk_read_bps", "disk_write_bps", "memory_used_bytes", "system_power_mw", "battery_percent", "power_mw",
+                 "network_receive_bps", "network_send_bps"]
     var output = csvRow(["series", "record_type", "t"] + metricHeaders(names) + ["gap_from", "gap_to"])
     for series in history {
         for point in series.points {
             let pointMetrics: [Metric?] = [point.cpuPercent, point.footprintBytes, point.diskReadBps, point.diskWriteBps, point.memoryUsedBytes,
-                                           point.systemPowerMW, point.batteryPercent, point.powerMW]
+                                           point.systemPowerMW, point.batteryPercent, point.powerMW, point.networkReceiveBps, point.networkSendBps]
             let values: [String] = pointMetrics.flatMap { metricCells($0) }
             output += csvRow([series.series, "point", dateCell(point.t)] + values + ["", ""])
         }

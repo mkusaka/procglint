@@ -109,7 +109,9 @@ public struct HistoryStore: Sendable {
                             memoryPressurePercent: snapshot.system.memoryPressurePercent,
                             memoryPressure: snapshot.system.memoryPressure.value,
                             systemPowerMW: snapshot.system.battery?.systemPowerMW,
-                            batteryPercent: snapshot.system.battery?.percent), to: "system", tick: tick)
+                            batteryPercent: snapshot.system.battery?.percent,
+                            networkReceiveBps: snapshot.system.networkReceiveBps,
+                            networkSendBps: snapshot.system.networkSendBps), to: "system", tick: tick)
         let samples = Dictionary(snapshot.processes.map { ($0.processKey, $0) }, uniquingKeysWith: { _, latest in latest })
         for key in trackedKeys {
             let name = key.rawValue
@@ -120,7 +122,8 @@ public struct HistoryStore: Sendable {
             }
             append(HistoryPoint(t: snapshot.sampledAt, cpuPercent: process.cpuPercent, footprintBytes: process.footprintBytes,
                                 diskReadBps: process.diskReadBps, diskWriteBps: process.diskWriteBps,
-                                powerMW: process.powerMW), to: name, tick: tick)
+                                powerMW: process.powerMW, networkReceiveBps: process.networkReceiveBps,
+                                networkSendBps: process.networkSendBps), to: name, tick: tick)
         }
     }
 

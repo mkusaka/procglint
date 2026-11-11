@@ -41,12 +41,15 @@ public struct SystemMetrics: Sendable, Codable, Equatable {
     public var swapUsedBytes: Metric
     public var swapTotalBytes: Metric
     public var battery: BatteryMetrics?
+    public var networkReceiveBps: Metric
+    public var networkSendBps: Metric
 
     public init(cpuPercent: Metric, physicalMemoryBytes: UInt64, pageSize: UInt64, memoryUsedBytes: UInt64,
                 wiredBytes: UInt64, compressedBytes: UInt64, activeBytes: UInt64, inactiveBytes: UInt64, freeBytes: UInt64,
                 memoryPressure: MemoryPressureMetric = .unsupported, memoryPressurePercent: Metric = .unsupported,
                 swapUsedBytes: Metric = .unsupported,
-                swapTotalBytes: Metric = .unsupported, battery: BatteryMetrics? = nil)
+                swapTotalBytes: Metric = .unsupported, battery: BatteryMetrics? = nil,
+                networkReceiveBps: Metric = .unsupported, networkSendBps: Metric = .unsupported)
     {
         self.cpuPercent = cpuPercent
         self.physicalMemoryBytes = physicalMemoryBytes
@@ -62,6 +65,8 @@ public struct SystemMetrics: Sendable, Codable, Equatable {
         self.swapUsedBytes = swapUsedBytes
         self.swapTotalBytes = swapTotalBytes
         self.battery = battery
+        self.networkReceiveBps = networkReceiveBps
+        self.networkSendBps = networkSendBps
     }
 
     /// A 1.0.0 agent can outlive an upgrade by its idle grace period; its snapshots lack the memory-pressure fields.
@@ -81,7 +86,9 @@ public struct SystemMetrics: Sendable, Codable, Equatable {
             memoryPressurePercent: values.decodeIfPresent(Metric.self, forKey: .memoryPressurePercent) ?? .unsupported,
             swapUsedBytes: values.decodeIfPresent(Metric.self, forKey: .swapUsedBytes) ?? .unsupported,
             swapTotalBytes: values.decodeIfPresent(Metric.self, forKey: .swapTotalBytes) ?? .unsupported,
-            battery: values.decodeIfPresent(BatteryMetrics.self, forKey: .battery)
+            battery: values.decodeIfPresent(BatteryMetrics.self, forKey: .battery),
+            networkReceiveBps: values.decodeIfPresent(Metric.self, forKey: .networkReceiveBps) ?? .unsupported,
+            networkSendBps: values.decodeIfPresent(Metric.self, forKey: .networkSendBps) ?? .unsupported
         )
     }
 }
@@ -104,6 +111,10 @@ public struct ProcessSample: Sendable, Codable, Equatable {
     public var diskReadBps: Metric
     public var diskWriteBps: Metric
     public var powerMW: Metric
+    public var networkReceiveBps: Metric
+    public var networkSendBps: Metric
+    public var networkReceivedBytes: Metric
+    public var networkSentBytes: Metric
     public var startTime: Date
     public var path: String?
     public var commandLine: ProcessCommandLine?
@@ -118,7 +129,9 @@ public struct ProcessSample: Sendable, Codable, Equatable {
                 diskWriteBps: Metric, startTime: Date, path: String? = nil,
                 commandLine: ProcessCommandLine? = nil, cwd: WorkingDirectory? = nil,
                 ancestors: [ProcessAncestor]? = nil, ancestorsIncomplete: Bool? = nil, childrenCount: Int? = nil,
-                powerMW: Metric = .unsupported)
+                powerMW: Metric = .unsupported,
+                networkReceiveBps: Metric = .unsupported, networkSendBps: Metric = .unsupported,
+                networkReceivedBytes: Metric = .unsupported, networkSentBytes: Metric = .unsupported)
     {
         self.processKey = processKey
         self.pid = pid
@@ -137,6 +150,10 @@ public struct ProcessSample: Sendable, Codable, Equatable {
         self.diskReadBps = diskReadBps
         self.diskWriteBps = diskWriteBps
         self.powerMW = powerMW
+        self.networkReceiveBps = networkReceiveBps
+        self.networkSendBps = networkSendBps
+        self.networkReceivedBytes = networkReceivedBytes
+        self.networkSentBytes = networkSentBytes
         self.startTime = startTime
         self.path = path
         self.commandLine = commandLine
@@ -152,6 +169,7 @@ public struct ProcessSample: Sendable, Codable, Equatable {
         case powerMW = "powerMw"
         case footprintBytes, rssBytes, diskReadBytes, diskWrittenBytes, diskReadBps, diskWriteBps, startTime, path
         case commandLine, cwd, ancestors, ancestorsIncomplete, childrenCount
+        case networkReceiveBps, networkSendBps, networkReceivedBytes, networkSentBytes
     }
 }
 

@@ -22,7 +22,7 @@ struct AgentHarness: Sendable {
     let directory: URL
     let signals = IntegrationSignals()
 
-    init(instance: String = "agent-a") throws {
+    init(instance: String = "agent-a", networkSource: (any NetworkSource)? = nil) throws {
         let source = FakeProcessSource()
         source.update { $0.bootSessionID = "boot-a" }
         for (pid, uid) in [(Int32(42), geteuid()), (43, geteuid()), (84, geteuid() + 1), (getpid(), geteuid())] {
@@ -36,7 +36,7 @@ struct AgentHarness: Sendable {
         let policy = try SamplingPolicy()
         let settings = try InMemorySettingsStore(policy: policy, allowedPermissions: .all)
         self.settings = settings
-        let sampler = try Sampler(source: source, clock: clock, agentInstanceID: instance)
+        let sampler = try Sampler(source: source, clock: clock, agentInstanceID: instance, networkSource: networkSource)
         self.sampler = sampler
         let wallNow: @Sendable () -> Date = { Date(timeIntervalSince1970: Double(clock.now) / 1_000_000_000) }
         let scheduler = try SamplingScheduler(clock: clock, policy: policy, wallNow: wallNow, collect: {
