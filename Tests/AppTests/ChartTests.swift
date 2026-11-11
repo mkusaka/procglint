@@ -105,7 +105,7 @@ import Testing
 }
 
 @MainActor
-@Test func fullProcessHistoryKeepsSystemMonitoringAndExplainsTheLimit() async throws {
+@Test func explicitOwnershipLimitDoesNotBlockAutomaticHistory() async throws {
     let prefs = preferences()
     defer { prefs.defaults.removePersistentDomain(forName: prefs.store.suiteName ?? "") }
     let process = try sample()
@@ -116,13 +116,12 @@ import Testing
     model.select(process.processKey)
     await model.selectionUpdate?.value
     await model.tick()
-    #expect(model.message.contains("history_limit_reached"))
-    #expect(model.message.contains("Unpin"))
+    #expect(model.message.isEmpty)
     #expect(model.header != nil)
     #expect(model.systemHistory != nil)
-    #expect(model.history == nil)
+    #expect(model.history != nil)
     #expect(service.leaseRequests.last?.processKeys.isEmpty == true)
-    #expect(service.historyRequests.allSatisfy { $0.series == ["system"] })
+    #expect(service.historyRequests.contains { $0.series.contains(process.processKey.rawValue) })
     service.leaseHistoryError = nil
     await model.tick()
     #expect(model.message.isEmpty)

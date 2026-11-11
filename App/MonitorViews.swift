@@ -201,14 +201,15 @@ private struct InspectorHistory: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Divider()
-            Toggle("Pin process history", isOn: Binding(get: { model.pinned }, set: { _ in
+            Toggle("Pin process", isOn: Binding(get: { model.pinned }, set: { _ in
                 Task { await model.togglePin() }
             }))
             .disabled(model.detail == nil)
             .accessibilityIdentifier("pinProcess")
-            Text("History starts when a process is pinned or selected")
+            Text("History covers the last \(model.policy.historyMinutes) minutes while procglint is sampling")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("historyHint")
             Text("CPU · 1 core = 100%").font(.headline)
             HistoryChart(model: model, kind: .cpu)
             Text("Memory (footprint)").font(.headline)

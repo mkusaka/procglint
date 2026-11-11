@@ -390,6 +390,49 @@ struct PerformanceMeasurements {
         print("PERF MCP rows=50 n=100 request_decode_p50_ms=\(decoding.sorted()[49]) scoped_fresh_and_query_p50_ms=\(querying.sorted()[49]) response_encode_p50_ms=\(encoding.sorted()[49]) response_decode_p50_ms=\(replyDecoding.sorted()[49]) cache_entries=\(store.responseCacheCount) sorts=\(store.querySortCount) load_after=\(loads)")
     }
 
+    @Test func allProcessHistoryCollectionCost() async throws {
+        let clock = FakeClock()
+        let sampler = try Sampler(source: populatedSource(count: 900), clock: clock, agentUID: 501)
+        var snapshot = try await sampler.sample()
+        var heapBefore = malloc_statistics_t()
+        malloc_zone_statistics(nil, &heapBefore)
+        var history = try HistoryStore(clock: clock, policy: SamplingPolicy())
+        var times: [Double] = []
+        for index in 0 ..< 250 {
+            snapshot.sampledAt = Date(timeIntervalSince1970: Double(clock.now) / 1_000_000_000)
+            let start = DispatchTime.now().uptimeNanoseconds
+            history.record(snapshot)
+            let duration = milliseconds(since: start)
+            if index >= 120 {
+                times.append(duration)
+            }
+            clock.advance(by: 5_000_000_000)
+            if index == 119 {
+                var heap = malloc_statistics_t()
+                malloc_zone_statistics(nil, &heap)
+                let heapGrowth = Int(heap.size_in_use) - Int(heapBefore.size_in_use)
+                print("PERF all-process history processes=900 points=120 estimated_bytes=\(history.bytesEstimate()) measured_heap_growth_bytes=\(heapGrowth)")
+            }
+        }
+        print("PERF all-process history added_record_p50_ms=\(times.sorted()[times.count / 2]) p95_ms=\(p95(times)) estimated_bytes=\(history.bytesEstimate())")
+        #expect(try history.series(snapshot.processes[0].processKey.rawValue).points.count <= 121)
+        #expect(history.bytesEstimate() < 8 * 1024 * 1024)
+        times.removeAll(keepingCapacity: true)
+        for index in 0 ..< 700 {
+            snapshot.sampledAt = Date(timeIntervalSince1970: Double(clock.now) / 1_000_000_000)
+            let start = DispatchTime.now().uptimeNanoseconds
+            history.record(snapshot)
+            if index >= 600 {
+                times.append(milliseconds(since: start))
+            }
+            clock.advance(by: 1_000_000_000)
+        }
+        #expect(try history.series(snapshot.processes[0].processKey.rawValue).points.count == 600)
+        let fullBytes = history.bytesEstimate()
+        print("PERF all-process history processes=900 points=600 estimated_bytes=\(fullBytes) added_record_p50_ms=\(times.sorted()[times.count / 2]) p95_ms=\(p95(times))")
+        #expect(fullBytes < 32 * 1024 * 1024)
+    }
+
     @Test func historyAtFullCaps() async throws {
         let clock = FakeClock()
         let sampler = try Sampler(source: populatedSource(count: 16), clock: clock, agentUID: 501)

@@ -26,7 +26,7 @@ The screenshots use isolated demonstration data, not a live process list.
 - Process CPU, cumulative CPU time, Memory (footprint) and optional RSS, attributed disk I/O counters/rates, OS-attributed power, PID and owner; system CPU, memory pressure, swap usage and defined VM memory statistics.
 - Battery charge, charging/time-remaining state, system power and discharge rate, with health/cycle count in the tooltip. Battery and process power history share the charts’ hover cursor; desktop Macs show no Battery card.
 - System and per-process network receive/send rates, optional observed byte counters, and synchronized two-series history charts.
-- Search, filter, sort and choose columns; inspect details, pin processes and read bounded history with explicit gaps for unobserved time.
+- Search, filter, sort and choose columns; inspect details, pin processes for the Pinned filter, and immediately graph any sampled process’s retained history (up to 10 minutes), with explicit gaps for unobserved time.
 - Copy List / Copy details put Markdown on the clipboard for pasting into an agent; command lines only when enabled.
 - Optional CPU/memory menu-bar display. Default updates are 5 seconds for the window and 10 seconds for the menu bar; no periodic sampling without an active lease.
 - Shared stdio MCP bridge: read-only, own processes, no paths by default; opt-in bounded observations, configuration and termination.
@@ -124,7 +124,7 @@ The packaged CLI is `/Applications/Procglint.app/Contents/Helpers/procglint`. Us
 
 `status --json` preserves the existing diagnostics and adds `system` from a shared snapshot read (`null` if that read fails). It does not start a separate sampler. Snapshot JSON/CSV exports also include memory pressure and swap.
 
-Exports default to JSON. Missing CSV metrics are empty, with separate status columns, never zero. `--all` does not bypass app permissions: CLI process/path scope is capped by the `include_system` / `include_paths` settings. The CLI shares the agent and does not run its own periodic sampler. History cannot recover time when a process was not tracked.
+Exports default to JSON. Missing CSV metrics are empty, with separate status columns, never zero. `--all` does not bypass app permissions: CLI process/path scope is capped by the `include_system` / `include_paths` settings. The CLI shares the agent and does not run its own periodic sampler. While sampling, the agent records every sampled process, not just selected or pinned ones, for the rolling `history_minutes` window (1–10 minutes, at most 600 points per series). Exited identities expire after their newest point leaves that window; explicitly owned keys may retain an empty series until released. `max_process_series` still caps explicit pin/lease/observation ownership, not automatic recording. There is no periodic sampling without a lease, and history cannot recover unsampled time. On-demand reads retain their existing shared-collection behavior. Process history uses Float32 chart values; snapshot values and cumulative counters remain full precision.
 
 ## Architecture
 

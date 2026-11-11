@@ -25,7 +25,7 @@ import Testing
     }
 }
 
-@Test(.timeLimit(.minutes(1))) func guiLeaseRenewalReplacesKeysWithoutBackfill() async throws {
+@Test(.timeLimit(.minutes(1))) func guiLeaseRenewalDoesNotLimitRecordedCensusHistory() async throws {
     let clock = FakeClock()
     let first = try storeProcess()
     let second = try storeProcess(pid: 43)
@@ -39,32 +39,32 @@ import Testing
     await waitForSnapshot(scheduler, sequence: 2)
     let request = try LeaseRequest(kind: .guiWindow, intervalMS: .tenSeconds, processKeys: [first.processKey])
     let lease = try await scheduler.setLease(request, clientID: "gui-a")
-    #expect(try await scheduler.history(series: first.processKey.rawValue).points.isEmpty)
+    #expect(try await scheduler.history(series: first.processKey.rawValue).points.count == 2)
     clock.advance(by: 1_000_000_000)
     _ = try await scheduler.freshSnapshot(maxAge: 0)
-    #expect(try await scheduler.history(series: first.processKey.rawValue).points.map(\.t) == [Date(timeIntervalSince1970: 2)])
+    #expect(try await scheduler.history(series: first.processKey.rawValue).points.count == 3)
     let changed = try LeaseRequest(kind: .guiWindow, intervalMS: .tenSeconds, processKeys: [second.processKey])
     #expect(try await scheduler.setLease(changed, clientID: "gui-a").leaseID == lease.leaseID)
     clock.advance(by: 1_000_000_000)
     _ = try await scheduler.freshSnapshot(maxAge: 0)
-    #expect(try await scheduler.history(series: first.processKey.rawValue).points.count == 1)
-    #expect(try await scheduler.history(series: second.processKey.rawValue).points.map(\.t) == [Date(timeIntervalSince1970: 3)])
+    #expect(try await scheduler.history(series: first.processKey.rawValue).points.count == 4)
+    #expect(try await scheduler.history(series: second.processKey.rawValue).points.count == 4)
     _ = try await scheduler.setLease(request, clientID: "gui-a")
     clock.advance(by: 1_000_000_000)
     _ = try await scheduler.freshSnapshot(maxAge: 0)
     let resumed = try await scheduler.history(series: first.processKey.rawValue)
-    #expect(resumed.points.map(\.t) == [Date(timeIntervalSince1970: 2), Date(timeIntervalSince1970: 4)])
-    #expect(resumed.gaps == [HistoryGap(from: Date(timeIntervalSince1970: 2), to: Date(timeIntervalSince1970: 4))])
+    #expect(resumed.points.map(\.t) == (0 ... 4).map { Date(timeIntervalSince1970: Double($0)) })
+    #expect(!resumed.gaps.contains { $0.from == Date(timeIntervalSince1970: 2) })
     _ = try await scheduler.setLease(LeaseRequest(kind: .guiWindow, intervalMS: .tenSeconds), clientID: "gui-a")
     clock.advance(by: 1_000_000_000)
     _ = try await scheduler.freshSnapshot(maxAge: 0)
-    #expect(try await scheduler.history(series: first.processKey.rawValue).points.count == 2)
-    #expect(try await scheduler.history(series: second.processKey.rawValue).points.count == 1)
+    #expect(try await scheduler.history(series: first.processKey.rawValue).points.count == 6)
+    #expect(try await scheduler.history(series: second.processKey.rawValue).points.count == 6)
     await scheduler.shutdown()
 }
 
 @Test(.timeLimit(.minutes(1)), arguments: ["release", "expiry", "disconnect"])
-func guiLeaseEndUntracksHistory(reason: String) async throws {
+func guiLeaseEndStopsPeriodicSamplingButOnDemandReadsStillRecord(reason: String) async throws {
     let clock = FakeClock()
     let process = try storeProcess()
     let counter = CountingCollect(clock: clock, processes: [process])
@@ -84,7 +84,9 @@ func guiLeaseEndUntracksHistory(reason: String) async throws {
     }
     clock.advance(by: 5_000_000_000)
     _ = try await scheduler.freshSnapshot(maxAge: 0)
-    #expect(try await scheduler.history(series: process.processKey.rawValue).points == before)
+    let after = try await scheduler.history(series: process.processKey.rawValue)
+    #expect(after.points.count == before.count + 1)
+    #expect(!after.gaps.isEmpty)
     #expect(await scheduler.effectiveInterval == nil)
     await scheduler.shutdown()
 }

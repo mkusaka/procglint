@@ -131,7 +131,7 @@ Ancestors and child counts are not permission-gated and are computed only on det
 - An unreported process owned by another user has `permission_denied`, never a fabricated zero. Reported foreign-process data remains subject to the existing `include_system` scope. After a successful query, an own process with no reported sources has zero cumulative bytes; its first rate remains `warming_up`.
 - The manager lives with the sampler. Counts and descriptions are queried for each shared collection; new-source descriptions are also queried when sources arrive so short-lived sources can be attributed. Clients never create independent collectors.
 - Only PID, process start time and byte counters enter network aggregation. Addresses, ports, interface names and hostnames from source descriptions are never retained, logged or exposed.
-- Snapshot decoders treat absent network fields as `unsupported`. `HistoryPoint` adds optional `network_receive_bps` and `network_send_bps` Metrics for both system and tracked process series; absent history fields decode as nil.
+- Snapshot decoders treat absent network fields as `unsupported`. `HistoryPoint` adds optional `network_receive_bps` and `network_send_bps` Metrics for both system and all sampled process series; absent history fields decode as nil.
 - Sort key `network` ranks the sum of receive and send bytes/s. Either direction missing makes the combined sort value missing; missing values sort last in both orders. The four process network fields are available to `ProcessQuery.fields`.
 - MCP snapshot, process, history and monitor-status schemas expose the corresponding fields. CLI `export snapshot --sort network` supports network sorting; snapshot/history CSV exports include network columns, and `status` / `show` print receive/send rates using decimal B/s, KB/s and MB/s.
 
@@ -153,10 +153,10 @@ Ancestors and child counts are not permission-gated and are computed only on det
 
 ## History
 
-- Retained: system series always while sampling; process series only for pinned, observed, or GUI-selected processes.
-- Limits (defaults): 10 minutes window, 600 points per series, 16 process series per agent. To reserve slots, evict ownerless process series oldest-last-tracked first; active ownership exceeding the limit → `history_limit_reached`.
+- Retained: system series and every sampled process series while sampling. Selecting or pinning a process exposes already recorded points; unobserved time is never backfilled.
+- Limits (defaults): 10 minutes window, 600 points per series. Process points use Float32 metric values internally, preserving metric statuses; snapshots remain full precision. `max_process_series` limits distinct explicitly owned keys across pins and active GUI/observation leases, not automatically recorded series. Explicit ownership exceeding the limit → `history_limit_reached`. An unowned process series expires when its newest point is older than the window; explicit ownership may retain an empty series until released. Pins also control the Pinned process filter.
 - `HistoryPoint`: `t` (date), `cpu_percent`, `footprint_bytes`, `disk_read_bps`, `disk_write_bps` (Metric each; system uses `cpu_percent`, `memory_used_bytes`, and optional `memory_pressure_percent: Metric` and `memory_pressure: "normal" | "warning" | "critical"`; absent decodes as nil, process points omit them). System points also optionally carry `system_power_mw` and `battery_percent`; process points optionally `power_mw` (all Metrics; absent → nil).
-- `HistorySeries`: `series` (`"system"` or a process_key), `points`, `gaps: [{from, to}]` — intervals where sampling was stopped or the process was not tracked. Charts draw no line across a gap. History never backfills unobserved time.
+- `HistorySeries`: `series` (`"system"` or a process_key), `points`, `gaps: [{from, to}]` — intervals where sampling was stopped, a collection was unavailable, or the process was absent from a successful census. Charts draw no line across a gap. History never backfills unobserved time.
 - Cursor responses add `next_cursor?`, `is_delta` (default false) and `retained_point_count?` (0…600). A delta carries only new points and replaces the cached gap list; the client appends and keeps the last `retained_point_count` points. A full response replaces the cached series. Cursors bind to the store/buffer generation, series, query bounds and gap revision; agent restart, eviction of unseen points, buffer recreation, gap changes, overlapping or noncontiguous selections fall back to full data. Cursors are not authorization. MCP `get_history` is unchanged.
 
 ## Leases and the scheduler
@@ -171,8 +171,8 @@ Ancestors and child counts are not permission-gated and are computed only on det
 | `interval_ms` | 1000 / 2000 / 5000 / 10000 |
 | `expires_at` | monotonic deadline, required for `observation`; GUI leases are renewed by the GUI while visible (TTL 30 s). |
 
-`LeaseRequest` accepts optional `process_keys` (0…16, missing defaults to empty), only for `gui_window`: the lease owns tracking of those keys, within `max_process_series` (`history_limit_reached` on overflow), without backfill.
-Renewal replaces the tracked key set; release, expiry, or disconnect removes that ownership.
+`LeaseRequest` accepts optional `process_keys` (0…16, missing defaults to empty), only for `gui_window`: the lease explicitly owns those keys within `max_process_series` (`history_limit_reached` on overflow). Ownership does not gate or restart history recording. Renewal replaces the owned key set; release, expiry, or disconnect removes that ownership without deleting recorded points.
+
 
 Rules:
 

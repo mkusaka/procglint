@@ -126,6 +126,28 @@ struct CopyTextTests {
         #expect(!hidden.contains("/fixture/") && !hidden.contains("Command:"))
     }
 
+    @MainActor
+    @Test func newlySelectedUnpinnedProcessImmediatelyCopiesItsPastHistory() async throws {
+        let fixture = try UITestingFixture()
+        defer { fixture.cleanUp() }
+        let model = try MonitorViewModel(service: fixture, preferences: fixture.preferences())
+        await model.setVisibility(window: true, menuBar: false)
+        let key = try ProcessKey("p1.boot-ui.4116.10")
+        let process = try #require(model.rows.first { $0.pid == 4116 })
+        #expect(process.processKey == key)
+        model.select(key)
+        await model.refreshInspector()
+        #expect(!model.pinned)
+        let history = try #require(model.history)
+        #expect(history.points.count == 121)
+        #expect(try #require(history.points.first).t < #require(model.header).sampledAt)
+        let text = CopyText.details(process: process, permissions: model.permissions, history: history,
+                                    window: Date.distantPast ... Date.distantFuture)
+        #expect(text.contains("CPU history, percent"))
+        #expect(text.contains("Memory (footprint) history, bytes"))
+        #expect(text.contains("Network history, bytes per second"))
+    }
+
     @Test func historySummariesUseOnlyShownWindowAndExcludeGapsAndMissingValues() throws {
         let process = try sample()
         let points: [(Double, Metric)] = [(0, .ok(999)), (10, .ok(10)), (20, .ok(900)), (30, .ok(30)), (40, .warmingUp), (50, .ok(999))]

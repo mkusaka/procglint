@@ -31,12 +31,37 @@ public struct HistoryStore: Sendable {
         var id = UUID().uuidString
         var nextSequence: UInt64 = 0
         var gapRevision: UInt64 = 0
-        var points = BoundedRing<TimedPoint>(capacity: 600)
-        var gaps = BoundedRing<TimedGap>(capacity: 600)
+        var systemPoints: BoundedRing<TimedPoint>?
+        var processPoints = BoundedRing<CompactProcessPoint>(capacity: 600, preallocate: false)
+        var gaps = BoundedRing<TimedGap>(capacity: 600, preallocate: false)
         var gapStart: Date?
         var gapStartTick: UInt64 = 0
         var latestTick: UInt64 = 0
-        var lastTrackedTick: UInt64 = 0
+        var seenCollection: UInt64 = 0
+        var isOwn: Bool?
+
+        var lastTick: UInt64? {
+            systemPoints?.last?.tick ?? processPoints.last?.tick
+        }
+
+        var lastDate: Date? {
+            systemPoints?.last?.point.t ?? processPoints.last?.t
+        }
+
+        mutating func closeGap(at date: Date, tick: UInt64) {
+            if let start = gapStart {
+                gaps.append(TimedGap(fromTick: gapStartTick, tick: tick, gap: HistoryGap(from: start, to: date)))
+                gapStart = nil
+            }
+            latestTick = tick
+        }
+
+        mutating func openGap(at date: Date, tick: UInt64) {
+            guard gapStart == nil else { return }
+            gapRevision += 1
+            gapStart = lastDate ?? date
+            gapStartTick = lastTick ?? tick
+        }
     }
 
     private struct Tracking: Sendable {
@@ -49,8 +74,9 @@ public struct HistoryStore: Sendable {
     private let wallNow: @Sendable () -> Date
     private var windowNS: UInt64
     private var maximumSeries: Int
-    private var buffers: [String: Buffer] = ["system": Buffer()]
+    private var buffers: [String: Buffer] = ["system": Buffer(systemPoints: BoundedRing(capacity: 600))]
     private var owners: [String: Tracking] = [:]
+    private var collection: UInt64 = 0
     public private(set) var pinned: Set<ProcessKey> = []
 
     public init(clock: any MonotonicClock, policy: SamplingPolicy, wallNow: @escaping @Sendable () -> Date = { Date() }) throws {
@@ -64,8 +90,8 @@ public struct HistoryStore: Sendable {
     public mutating func setPolicy(_ policy: SamplingPolicy) throws {
         try policy.validate()
         prune()
-        guard buffers.count - 1 <= policy.maxProcessSeries else {
-            throw AgentError.historyLimitReached("Retained process history exceeds the new limit")
+        guard trackedKeys.count <= policy.maxProcessSeries else {
+            throw AgentError.historyLimitReached("Explicit process history ownership exceeds the new limit")
         }
         windowNS = UInt64(policy.historyMinutes) * 60_000_000_000
         maximumSeries = policy.maxProcessSeries
@@ -79,7 +105,6 @@ public struct HistoryStore: Sendable {
             self.pinned.insert(key)
         } else {
             self.pinned.remove(key)
-            markUntrackedGaps()
         }
     }
 
@@ -88,13 +113,11 @@ public struct HistoryStore: Sendable {
         guard deadline > clock.now else { throw AgentError.invalidArgument("Tracking deadline must be in the future") }
         try reserve(Set(keys), replacingOwner: owner)
         owners[owner] = Tracking(keys: Set(keys), deadline: deadline)
-        markUntrackedGaps()
     }
 
     public mutating func untrack(owner: String) {
         prune()
         owners.removeValue(forKey: owner)
-        markUntrackedGaps()
     }
 
     public mutating func record(_ snapshot: Snapshot, capturedAt: UInt64? = nil) {
@@ -104,33 +127,51 @@ public struct HistoryStore: Sendable {
             recordGap()
             return
         }
-        append(HistoryPoint(t: snapshot.sampledAt, cpuPercent: snapshot.system.cpuPercent,
-                            memoryUsedBytes: .ok(Double(snapshot.system.memoryUsedBytes)),
-                            memoryPressurePercent: snapshot.system.memoryPressurePercent,
-                            memoryPressure: snapshot.system.memoryPressure.value,
-                            systemPowerMW: snapshot.system.battery?.systemPowerMW,
-                            batteryPercent: snapshot.system.battery?.percent,
-                            networkReceiveBps: snapshot.system.networkReceiveBps,
-                            networkSendBps: snapshot.system.networkSendBps), to: "system", tick: tick)
-        let samples = Dictionary(snapshot.processes.map { ($0.processKey, $0) }, uniquingKeysWith: { _, latest in latest })
-        for key in trackedKeys {
-            let name = key.rawValue
-            buffers[name]?.latestTick = tick
-            guard let process = samples[key], process.status != .exited else {
-                openGap(name, at: snapshot.sampledAt)
-                continue
+        collection += 1
+        let point = HistoryPoint(t: snapshot.sampledAt, cpuPercent: snapshot.system.cpuPercent,
+                                 memoryUsedBytes: .ok(Double(snapshot.system.memoryUsedBytes)),
+                                 memoryPressurePercent: snapshot.system.memoryPressurePercent,
+                                 memoryPressure: snapshot.system.memoryPressure.value,
+                                 systemPowerMW: snapshot.system.battery?.systemPowerMW,
+                                 batteryPercent: snapshot.system.battery?.percent,
+                                 networkReceiveBps: snapshot.system.networkReceiveBps,
+                                 networkSendBps: snapshot.system.networkSendBps)
+        buffers["system"]?.closeGap(at: point.t, tick: tick)
+        let sequence = buffers["system"]?.nextSequence ?? 0
+        buffers["system"]?.systemPoints?.append(TimedPoint(tick: tick, sequence: sequence, point: point))
+        buffers["system"]?.nextSequence += 1
+        for process in snapshot.processes where process.status != .exited {
+            let name = process.processKey.rawValue
+            if buffers[name] == nil {
+                buffers[name] = Buffer(latestTick: tick)
             }
-            append(HistoryPoint(t: snapshot.sampledAt, cpuPercent: process.cpuPercent, footprintBytes: process.footprintBytes,
-                                diskReadBps: process.diskReadBps, diskWriteBps: process.diskWriteBps,
-                                powerMW: process.powerMW, networkReceiveBps: process.networkReceiveBps,
-                                networkSendBps: process.networkSendBps), to: name, tick: tick)
+            Self.append(process, to: &buffers[name]!, at: snapshot.sampledAt, tick: tick, collection: collection)
         }
+        for name in Array(buffers.keys) where name != "system" && buffers[name]?.seenCollection != collection {
+            buffers[name]?.openGap(at: snapshot.sampledAt, tick: tick)
+        }
+    }
+
+    private static func append(_ process: ProcessSample, to buffer: inout Buffer, at date: Date, tick: UInt64, collection: UInt64) {
+        buffer.closeGap(at: date, tick: tick)
+        buffer.isOwn = process.isOwn
+        buffer.seenCollection = collection
+        buffer.processPoints.append(CompactProcessPoint(process, at: date, tick: tick))
+        buffer.nextSequence += 1
+    }
+
+    /// Scope metadata has exactly the same lifetime as the retained history, including after exit.
+    public mutating func isOwnProcess(_ key: ProcessKey) -> Bool? {
+        prune()
+        return buffers[key.rawValue]?.isOwn
     }
 
     /// Stops and wake both break chart continuity, even if no collection occurs during the gap.
     public mutating func recordGap() {
-        for name in buffers.keys {
-            openGap(name, at: wallNow())
+        let date = wallNow()
+        let tick = clock.now
+        for name in Array(buffers.keys) {
+            buffers[name]?.openGap(at: date, tick: tick)
         }
     }
 
@@ -143,7 +184,16 @@ public struct HistoryStore: Sendable {
         let cutoff = now > windowNS ? now - windowNS : 0
         let lowerTick = max(cutoff, fromTick ?? 0)
         let upperTick = min(now, throughTick ?? now)
-        let selected = buffer.points.elements().filter {
+        let points: [TimedPoint]
+        if let system = buffer.systemPoints {
+            points = system.elements()
+        } else {
+            let first = buffer.nextSequence - UInt64(buffer.processPoints.count)
+            points = buffer.processPoints.elements().enumerated().map {
+                TimedPoint(tick: $0.element.tick, sequence: first + UInt64($0.offset), point: $0.element.point)
+            }
+        }
+        let selected = points.filter {
             $0.point.t >= (since ?? .distantPast) && $0.point.t <= (until ?? .distantFuture) &&
                 $0.tick >= lowerTick && $0.tick <= upperTick
         }
@@ -174,12 +224,14 @@ public struct HistoryStore: Sendable {
 
     public mutating func bytesEstimate() -> UInt64 {
         prune()
-        var total = 0
-        for buffer in buffers.values {
-            let points: Int = buffer.points.capacity * MemoryLayout<TimedPoint?>.stride
-            let gaps: Int = buffer.gaps.capacity * MemoryLayout<TimedGap?>.stride
-            total += points + gaps + 256
+        var total = buffers.capacity * (MemoryLayout<String>.stride + MemoryLayout<Buffer>.stride + 8)
+        for (name, buffer) in buffers {
+            let system = (buffer.systemPoints?.capacity ?? 0) * MemoryLayout<TimedPoint?>.stride
+            let process = buffer.processPoints.capacity * MemoryLayout<CompactProcessPoint?>.stride
+            let gaps = buffer.gaps.capacity * MemoryLayout<TimedGap?>.stride
+            total += system + process + gaps + name.utf8.count + 128
         }
+        total += pinned.count * 64 + owners.values.reduce(0) { $0 + 128 + $1.keys.count * 64 }
         return UInt64(total)
     }
 
@@ -188,88 +240,40 @@ public struct HistoryStore: Sendable {
     }
 
     private mutating func reserve(_ keys: Set<ProcessKey>, replacingOwner: String? = nil) throws {
-        let new = keys.filter { buffers[$0.rawValue] == nil }
-        let needed = buffers.count - 1 + new.count - maximumSeries
-        if needed > 0 {
-            // Reserve against the replacement ownership without changing it if the request fails.
-            var protected = pinned.union(keys)
-            for (owner, tracking) in owners where owner != replacingOwner {
-                protected.formUnion(tracking.keys)
-            }
-            let names = Set(protected.map(\.rawValue))
-            let candidates = buffers.filter { $0.key != "system" && !names.contains($0.key) }.sorted {
-                if $0.value.lastTrackedTick == $1.value.lastTrackedTick {
-                    return $0.key < $1.key
-                }
-                return $0.value.lastTrackedTick < $1.value.lastTrackedTick
-            }
-            guard candidates.count >= needed else { throw AgentError.historyLimitReached("Process history limit reached") }
-            for candidate in candidates.prefix(needed) {
-                buffers.removeValue(forKey: candidate.key)
-            }
+        // Compatibility limits explicit ownership, never automatic recording or retention of sampled points.
+        var protected = pinned.union(keys)
+        for (owner, tracking) in owners where owner != replacingOwner {
+            protected.formUnion(tracking.keys)
         }
-        for key in new {
-            buffers[key.rawValue] = Buffer(latestTick: clock.now, lastTrackedTick: clock.now)
-        }
-    }
-
-    private mutating func append(_ point: HistoryPoint, to name: String, tick: UInt64) {
-        if let start = buffers[name]?.gapStart {
-            let fromTick = buffers[name]?.gapStartTick ?? tick
-            buffers[name]?.gaps.append(TimedGap(fromTick: fromTick, tick: tick, gap: HistoryGap(from: start, to: point.t)))
-            buffers[name]?.gapStart = nil
-        }
-        buffers[name]?.latestTick = tick
-        let sequence = buffers[name]?.nextSequence ?? 0
-        buffers[name]?.points.append(TimedPoint(tick: tick, sequence: sequence, point: point))
-        buffers[name]?.nextSequence += 1
-    }
-
-    private mutating func openGap(_ name: String, at date: Date) {
-        guard buffers[name]?.gapStart == nil else { return }
-        buffers[name]?.gapRevision += 1
-        let last = buffers[name]?.points.last
-        let startTick = last?.tick ?? clock.now
-        buffers[name]?.gapStart = last?.point.t ?? date
-        buffers[name]?.gapStartTick = startTick
-    }
-
-    private mutating func markUntrackedGaps() {
-        let active = Set(trackedKeys.map(\.rawValue))
-        let now = clock.now
-        for name in buffers.keys where name != "system" {
-            if active.contains(name) {
-                buffers[name]?.lastTrackedTick = now
-            } else {
-                openGap(name, at: wallNow())
-            }
+        guard protected.count <= maximumSeries else { throw AgentError.historyLimitReached("Process history limit reached") }
+        for key in keys where buffers[key.rawValue] == nil {
+            buffers[key.rawValue] = Buffer(latestTick: clock.now)
         }
     }
 
     private mutating func prune() {
         let now = clock.now
-        for tracking in owners.values where tracking.deadline <= now {
-            for key in tracking.keys {
-                let last = buffers[key.rawValue]?.lastTrackedTick ?? 0
-                buffers[key.rawValue]?.lastTrackedTick = max(last, tracking.deadline)
-            }
-        }
         owners = owners.filter { $0.value.deadline > now }
-        markUntrackedGaps()
         let cutoff = now > windowNS ? now - windowNS : 0
         let active = Set(trackedKeys.map(\.rawValue))
+        // Copy keys rather than retaining dictionary storage, which would force copy-on-write of every ring.
         for name in Array(buffers.keys) {
-            while let first = buffers[name]?.points.first, first.tick < cutoff {
-                buffers[name]?.points.removeFirst()
-            }
-            while let first = buffers[name]?.gaps.first, first.tick < cutoff {
-                buffers[name]?.gaps.removeFirst()
-            }
-            if name != "system", !active.contains(name), buffers[name]?.points.count == 0, buffers[name]?.gaps.count == 0,
-               (buffers[name]?.latestTick ?? 0) < cutoff
-            {
+            Self.prune(&buffers[name]!, before: cutoff)
+            if name != "system", !active.contains(name), (buffers[name]?.latestTick ?? 0) < cutoff {
                 buffers.removeValue(forKey: name)
             }
+        }
+    }
+
+    private static func prune(_ buffer: inout Buffer, before cutoff: UInt64) {
+        while let first = buffer.systemPoints?.first, first.tick < cutoff {
+            buffer.systemPoints?.removeFirst()
+        }
+        while let first = buffer.processPoints.first, first.tick < cutoff {
+            buffer.processPoints.removeFirst()
+        }
+        while let first = buffer.gaps.first, first.tick < cutoff {
+            buffer.gaps.removeFirst()
         }
     }
 }

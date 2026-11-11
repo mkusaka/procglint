@@ -44,8 +44,6 @@ public actor AgentService: AgentRequestHandler {
     private var clients: [String: Session] = [:]
     private var tickets: [String: TicketPermission] = [:]
     private var pendingPrepares = 0
-    // History outlives processes; retain ownership only for series that Core actually retained.
-    private var historyOwnership: [ProcessKey: Bool] = [:]
     private var policy: SamplingPolicy
     private var changingPolicy = false
     private var reads: Bucket
@@ -240,7 +238,6 @@ public actor AgentService: AgentRequestHandler {
                 throw AgentError.notFound("Process is not visible")
             }
             let lease = try await scheduler.setLease(request, clientID: client.clientID)
-            await rememberHistoryOwnership(samples)
             return .setLease(lease)
         case let .releaseLease(id):
             try requireGUI(hello)
@@ -249,11 +246,10 @@ public actor AgentService: AgentRequestHandler {
         case let .startObservation(request):
             try require(.observe, in: permissions)
             try request.validate()
-            let samples = try await visibleSamples(request.processKeys, scope: scope)
+            _ = try await visibleSamples(request.processKeys, scope: scope)
             try requireClient(client)
             try require(.observe, in: self.permissions(for: hello))
             let observation = try await observations.start(request, clientID: client.clientID)
-            await rememberHistoryOwnership(samples)
             return .startObservation(observation)
         case let .stopObservation(id):
             try require(.observe, in: permissions)
@@ -261,10 +257,9 @@ public actor AgentService: AgentRequestHandler {
             return .stopObservation
         case let .pin(key, pinned):
             try requireGUI(hello)
-            let samples = try await visibleSamples([key], scope: scope, retainedHistory: !pinned)
+            _ = try await visibleSamples([key], scope: scope, retainedHistory: !pinned)
             try requireClient(client)
             try await scheduler.pin(key: key, pinned: pinned)
-            await rememberHistoryOwnership(samples)
             return .pin
         case .policy:
             try requireConfigure(hello, permissions: permissions)
@@ -403,21 +398,12 @@ public actor AgentService: AgentRequestHandler {
                 guard scope.includeSystem || sample.isOwn else { throw AgentError.notFound("Process is not visible") }
                 samples.append(sample)
             } else {
-                guard retainedHistory, let wasOwn = historyOwnership[key], scope.includeSystem || wasOwn else {
+                guard retainedHistory, let wasOwn = await scheduler.historyIsOwnProcess(key), scope.includeSystem || wasOwn else {
                     throw AgentError.notFound("Process is not visible or has exited")
                 }
             }
         }
         return samples
-    }
-
-    private func rememberHistoryOwnership(_ samples: [ProcessSample]) async {
-        for key in Array(historyOwnership.keys) where await (try? scheduler.history(series: key.rawValue)) == nil {
-            historyOwnership.removeValue(forKey: key)
-        }
-        for sample in samples where await (try? scheduler.history(series: sample.processKey.rawValue)) != nil {
-            historyOwnership[sample.processKey] = sample.isOwn
-        }
     }
 
     private func history(_ request: HistoryRequest, client: ClientContext, scope: AccessScope) async throws -> [HistorySeries] {
@@ -513,10 +499,6 @@ public actor AgentService: AgentRequestHandler {
 
     var retainedTicketCount: Int {
         tickets.count
-    }
-
-    var retainedHistoryOwnershipCount: Int {
-        historyOwnership.count
     }
 
     private func terminationRejection(_ error: any Error) -> TerminationRejection? {

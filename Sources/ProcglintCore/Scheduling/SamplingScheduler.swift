@@ -168,6 +168,10 @@ public actor SamplingScheduler {
         try historyStore.series(series, since: since, until: until, fromTick: fromTick, throughTick: throughTick)
     }
 
+    public func historyIsOwnProcess(_ key: ProcessKey) -> Bool? {
+        historyStore.isOwnProcess(key)
+    }
+
     var retainedSnapshotCount: Int {
         snapshots.retainedSnapshotCount
     }

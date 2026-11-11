@@ -29,7 +29,7 @@ struct GUILeaseHistoryServiceTests {
         #expect(error.code == .invalidArgument)
         let lease = try await gui.setLease(request)
         #expect(lease.kind == .guiWindow)
-        #expect(try await gui.history(HistoryRequest(series: [fixture.key().rawValue])).first?.points.isEmpty == true)
+        #expect(try await gui.history(HistoryRequest(series: [fixture.key().rawValue])).first?.points.count == 1)
         await gui.invalidate()
         await mcp.invalidate()
         await fixture.close()
@@ -58,6 +58,44 @@ struct GUILeaseHistoryServiceTests {
         #expect(try await reader.history(HistoryRequest(series: [key.rawValue])).first?.points == retained)
         await gui.invalidate()
         await reader.invalidate()
+        await fixture.close()
+    }
+
+    @Test func unselectedLiveAndExitedHistoryEnforcesEveryClientScope() async throws {
+        let fixture = try ServiceFixture()
+        let gui = fixture.client(.gui)
+        let cli = fixture.client(.cli)
+        let narrow = fixture.client(flags: [])
+        let broad = fixture.client(flags: [.includeSystem])
+        let own = try fixture.key()
+        let foreign = try fixture.key(84)
+        // No key is ever pinned, selected, or observed.
+        _ = try await gui.setLease(LeaseRequest(kind: .guiWindow, intervalMS: .tenSeconds))
+        _ = try await fixture.scheduler.freshSnapshot()
+        for reader in [gui, cli, broad] {
+            #expect(try await reader.history(HistoryRequest(series: [foreign.rawValue])).first?.points.isEmpty == false)
+        }
+        await expectAgentError(.notFound) { _ = try await narrow.history(HistoryRequest(series: [foreign.rawValue])) }
+        fixture.source.removeProcess(pid: 42)
+        fixture.source.removeProcess(pid: 84)
+        fixture.clock.advance(by: 5_000_000_000)
+        _ = try await fixture.scheduler.freshSnapshot(maxAge: 0)
+        for reader in [gui, cli, narrow, broad] {
+            #expect(try await reader.history(HistoryRequest(series: [own.rawValue])).first?.points.count == 1)
+        }
+        for reader in [gui, cli, broad] {
+            #expect(try await reader.history(HistoryRequest(series: [foreign.rawValue])).first?.points.count == 1)
+        }
+        await expectAgentError(.notFound) { _ = try await narrow.history(HistoryRequest(series: [foreign.rawValue])) }
+        fixture.settings.setAllowedPermissions([])
+        for reader in [gui, cli, broad] {
+            await expectAgentError(.notFound) { _ = try await reader.history(HistoryRequest(series: [foreign.rawValue])) }
+        }
+        fixture.clock.advance(by: 601_000_000_000)
+        await expectAgentError(.notFound) { _ = try await narrow.history(HistoryRequest(series: [own.rawValue])) }
+        for reader in [gui, cli, narrow, broad] {
+            await reader.invalidate()
+        }
         await fixture.close()
     }
 

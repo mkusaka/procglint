@@ -212,13 +212,10 @@ final class MonitorViewModel {
                                 historyLeaseMessage = ""
                             }
                         } catch let error as AgentError where !keys.isEmpty && (error.code == .historyLimitReached || error.code == .notFound) {
-                            // A full store or an exited selection must not block refreshing the process list.
+                            // Explicit ownership can be full; automatic history is still available.
                             leases[kind] = try await service.setLease(LeaseRequest(kind: kind, intervalMS: interval))
-                            historyLeaseMessage = error.code == .historyLimitReached
-                                ? "Process history is full (history_limit_reached). Unpin unused processes or stop other tracking to free a slot."
-                                : Display.error(error)
+                            historyLeaseMessage = error.code == .notFound ? Display.error(error) : ""
                             message = historyLeaseMessage
-                            history = nil
                         }
                         if kind == .guiWindow {
                             leaseProcessKeys = keys

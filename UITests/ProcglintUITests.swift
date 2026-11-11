@@ -69,6 +69,23 @@ final class ProcglintUITests: XCTestCase {
         }
     }
 
+    func testUnpinnedSelectionImmediatelyShowsPastHistory() throws {
+        try withApp { app, _ in
+            search("4116", in: app)
+            app.staticTexts["process.4116.name"].click()
+            expectValue(app.staticTexts["historyHint"], equals: "History covers the last 10 minutes while procglint is sampling")
+            let chart = app.descendants(matching: .any)["processMemoryChart"]
+            XCTAssertTrue(chart.waitForExistence(timeout: 5))
+            wait(for: NSPredicate(format: "value == %@", "1.0 MiB"), on: chart)
+            NSPasteboard.general.clearContents()
+            app.buttons["copyDetails"].click()
+            let details = try XCTUnwrap(NSPasteboard.general.string(forType: .string))
+            XCTAssertTrue(details.contains("CPU history, percent"))
+            XCTAssertTrue(details.contains("Network history, bytes per second"))
+            XCTAssertTrue(details.contains("min 1.0 MiB · max 1.0 MiB"))
+        }
+    }
+
     func testHoverSharesCursorReadoutAcrossHeaderAndInspectorCharts() throws {
         try withApp { app, _ in
             search("4100", in: app)

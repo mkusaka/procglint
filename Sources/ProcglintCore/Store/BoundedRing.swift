@@ -1,10 +1,12 @@
 struct BoundedRing<Element: Sendable>: Sendable {
     private var storage: [Element?]
     private var head = 0
+    private let maximumCapacity: Int
     private(set) var count = 0
 
-    init(capacity: Int) {
-        storage = Array(repeating: nil, count: capacity)
+    init(capacity: Int, preallocate: Bool = true) {
+        maximumCapacity = capacity
+        storage = Array(repeating: nil, count: preallocate ? capacity : 0)
     }
 
     var first: Element? {
@@ -20,6 +22,14 @@ struct BoundedRing<Element: Sendable>: Sendable {
     }
 
     mutating func append(_ element: Element) {
+        if count == capacity, capacity < maximumCapacity {
+            let retained = elements()
+            storage = Array(repeating: nil, count: min(maximumCapacity, max(8, capacity * 2)))
+            head = 0
+            for (index, value) in retained.enumerated() {
+                storage[index] = value
+            }
+        }
         let index = (head + count) % capacity
         storage[index] = element
         if count == capacity {

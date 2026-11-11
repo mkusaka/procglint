@@ -53,7 +53,9 @@ struct AgentRetentionTests {
         #expect(oldHistory.points.last == lastOldPoint)
         #expect(!oldHistory.points.contains { $0.footprintBytes?.value == 98765 })
         #expect(!oldHistory.gaps.isEmpty)
-        await integrationError(.notFound) { _ = try await gui.history(HistoryRequest(series: [reused.processKey.rawValue])) }
+        let newHistory = try await gui.history(HistoryRequest(series: [reused.processKey.rawValue]))
+        #expect(newHistory.first?.points.count == 1)
+        #expect(newHistory.first?.points.first?.footprintBytes?.value == 98765)
         #expect(try await gui.terminate(token: freshTicket.token).rejection == .processChanged)
         #expect(try await gui.terminate(token: ticket.token).outcome == .rejected)
         #expect(h.signals.pids.withLock { $0.isEmpty })
@@ -122,7 +124,6 @@ struct AgentRetentionTests {
                 #expect(await h.scheduler.responseCacheCount <= 8)
                 #expect(await h.termination.retainedTokenCount <= 64)
                 #expect(await h.service.retainedTicketCount <= 64)
-                #expect(await h.service.retainedHistoryOwnershipCount <= 16)
                 #expect(await h.observations.retainedObservationCount <= 2)
             }
         }
