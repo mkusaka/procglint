@@ -38,13 +38,13 @@ enum CopyText {
         }
         if var history, !history.points.isEmpty {
             history.points = history.points.filter { window.contains($0.t) }
-            let summaries = [HistoryChartKind.cpu, .memory, .io, .power].map { kind in
+            let summaries = [HistoryChartKind.cpu, .memory, .io, .network, .power].map { kind in
                 let fields = kind.fields.enumerated().map { index, field in
                     let values = ChartGeometry.segments(history, value: field).flatMap { $0.map(\.value) }
                     let minimum = values.min().map(kind.format) ?? "—"
                     let maximum = values.max().map(kind.format) ?? "—"
                     let latest = history.points.last.flatMap(field).map(kind.metricText) ?? "No history"
-                    let prefix = kind == .io ? (index == 0 ? "Read: " : "Write: ") : ""
+                    let prefix = kind.fields.count > 1 ? kind.seriesLabels[index] + ": " : ""
                     return "\(prefix)min \(minimum) · max \(maximum) · latest \(latest)"
                 }
                 return "- \(kind.label): " + fields.joined(separator: "; ")
@@ -57,7 +57,8 @@ enum CopyText {
     private static func system(_ header: SnapshotHeader?) -> String {
         var parts = ["CPU \(SummaryCard.cpu.value(header))", "Memory \(SummaryCard.memory.value(header)) \(SummaryCard.memory.caption(header))",
                      "Pressure \(SummaryCard.pressure.caption(header)) \(SummaryCard.pressure.value(header))",
-                     "Swap \(SummaryCard.swap.value(header))", "Compressed \(SummaryCard.compressed.value(header))"]
+                     "Swap \(SummaryCard.swap.value(header))", "Compressed \(SummaryCard.compressed.value(header))",
+                     "Network \(SummaryCard.network.value(header)) \(SummaryCard.network.caption(header))"]
         if header?.system.battery != nil {
             parts.append("Battery \(SummaryCard.battery.value(header)) \(SummaryCard.battery.caption(header))")
         }

@@ -9,17 +9,22 @@ final class ProcglintUITests: XCTestCase {
         try withApp { app, _ in
             let window = app.windows["mainWindow"]
             XCTAssertTrue(window.waitForExistence(timeout: 10))
-            for (card, value) in [("cpu", "25.0%"), ("memory", "4 GB"), ("pressure", "39%"), ("swap", "1 GB"), ("compressed", "512 MB"), ("battery", "69%")] {
+            for (card, value) in [("cpu", "25.0%"), ("memory", "4 GB"), ("pressure", "39%"), ("swap", "1 GB"), ("compressed", "512 MB"), ("network", "↓ 12.4 MB/s"), ("battery", "69%")] {
                 expectValue(window.staticTexts["summaryValue.\(card)"], equals: value)
             }
             XCTAssertTrue(window.staticTexts["Normal"].exists)
             XCTAssertTrue(window.staticTexts["of 8 GB"].exists)
             expectValue(window.staticTexts["batteryPower"], equals: "Using 33.1 W")
             expectValue(window.staticTexts["Charging · 1:53 to full"], equals: "Charging · 1:53 to full")
-            let powerColumn = window.tables["processTable"].descendants(matching: .any)["column.power"]
-            XCTAssertTrue(powerColumn.waitForExistence(timeout: 5))
-            wait(for: NSPredicate(format: "title == %@ OR label == %@", "Power", "Power"), on: powerColumn)
-            for identifier in ["systemCPUChart", "systemMemoryChart", "systemPressureChart", "systemPowerChart"] {
+            expectValue(window.staticTexts["↑ 1.2 MB/s"], equals: "↑ 1.2 MB/s")
+            for (column, title) in [("power", "Power"), ("network", "Network")] {
+                let header = window.tables["processTable"].descendants(matching: .any)["column.\(column)"]
+                XCTAssertTrue(header.waitForExistence(timeout: 5))
+                wait(for: NSPredicate(format: "title == %@", title), on: header)
+                XCTAssertTrue(header.isHittable)
+                XCTAssertLessThanOrEqual(header.frame.maxX, window.tables["processTable"].frame.maxX)
+            }
+            for identifier in ["systemCPUChart", "systemMemoryChart", "systemPressureChart", "systemPowerChart", "systemNetworkChart"] {
                 let chart = window.descendants(matching: .any)[identifier]
                 XCTAssertTrue(chart.waitForExistence(timeout: 5))
                 XCTAssertGreaterThan(chart.frame.width, 100)
@@ -41,6 +46,7 @@ final class ProcglintUITests: XCTestCase {
             let list = try XCTUnwrap(NSPasteboard.general.string(forType: .string))
             XCTAssertTrue(list.contains("| Name |"))
             XCTAssertTrue(list.contains("Alpha Worker"))
+            XCTAssertTrue(list.contains("| Network |") && list.contains("↓ 1.2 MB/s ↑ 340 KB/s"))
             XCTAssertFalse(window.buttons["copyDetails"].exists)
             app.staticTexts["process.4116.name"].click()
             app.typeKey("c", modifierFlags: .command)
@@ -58,6 +64,8 @@ final class ProcglintUITests: XCTestCase {
             let details = try XCTUnwrap(NSPasteboard.general.string(forType: .string))
             XCTAssertTrue(details.contains("Alpha Worker"))
             XCTAssertTrue(details.contains("## Identity"))
+            XCTAssertTrue(details.contains("| Network | ↓ 1.2 MB/s ↑ 340 KB/s |"))
+            XCTAssertTrue(details.contains("Network history, bytes per second: Receive:"))
             XCTAssertFalse(details.contains("ui-secret"))
         }
     }
@@ -77,6 +85,11 @@ final class ProcglintUITests: XCTestCase {
             wait(for: NSPredicate(format: "label CONTAINS %@", "Cursor: 1.0 MiB"), on: app.descendants(matching: .any)["processMemoryChart"])
             wait(for: NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Cursor:", " W"), on: app.descendants(matching: .any)["systemPowerChart"])
             wait(for: NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Cursor:", " W"), on: app.descendants(matching: .any)["processPowerChart"])
+            for identifier in ["systemNetworkChart", "processNetworkChart"] {
+                let chart = app.descendants(matching: .any)[identifier]
+                XCTAssertTrue(chart.exists)
+                wait(for: NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Cursor: Receive:", "Send:"), on: chart)
+            }
             XCTAssertEqual(memory.value as? String, "4.0 GiB")
             app.searchFields["processSearch"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
             wait(for: NSPredicate(format: "NOT (label CONTAINS %@)", "Cursor:"), on: memory)
@@ -141,11 +154,13 @@ final class ProcglintUITests: XCTestCase {
             search("4117", in: app)
             expectValue(app.staticTexts["process.4117.cpu"], equals: "—")
             expectValue(app.staticTexts["process.4117.power"], equals: "—")
+            expectValue(app.staticTexts["process.4117.network"], equals: "↓ — ↑ —")
             app.staticTexts["process.4117.name"].click()
             expectValue(app.staticTexts["processIdentity"], contains: "PID 4117 · fixture-user (uid 501)")
             search("4118", in: app)
             expectValue(app.staticTexts["process.4118.cpu"], equals: "—")
             expectValue(app.staticTexts["process.4118.power"], equals: "—")
+            expectValue(app.staticTexts["process.4118.network"], equals: "↓ — ↑ —")
             expectValue(app.staticTexts["process.4118.footprint"], equals: "—")
             app.staticTexts["process.4118.name"].click()
             expectValue(app.staticTexts["processIdentity"], contains: "Status: permission_denied")

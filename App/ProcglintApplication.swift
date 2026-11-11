@@ -91,7 +91,7 @@ public final class ProcglintApplication: NSObject, NSApplicationDelegate {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         }
         if uiTestingFixture != nil, ProcessInfo.processInfo.arguments.contains("--ui-testing-selected") {
-            main.window?.setContentSize(NSSize(width: 1360, height: 1260))
+            main.window?.setContentSize(NSSize(width: 1360, height: 1380))
             main.window?.center()
         }
         if uiTestingFixture != nil, let search = ProcessInfo.processInfo.environment["PROCGLINT_UI_TEST_SEARCH"] {

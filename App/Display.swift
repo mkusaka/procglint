@@ -51,6 +51,31 @@ enum Display {
                       locale: Locale(identifier: "en_US_POSIX"), scaled, units[unit])
     }
 
+    static func networkBytes(_ value: Double) -> String {
+        guard value.isFinite, value >= 0 else { return "—" }
+        let units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"]
+        var scaled = value
+        var unit = 0
+        while scaled >= 1000, unit < units.count - 1 {
+            scaled /= 1000
+            unit += 1
+        }
+        return String(format: scaled >= 100 || unit == 0 ? "%.0f %@" : "%.1f %@",
+                      locale: Locale(identifier: "en_US_POSIX"), scaled, units[unit])
+    }
+
+    static func networkRate(_ value: Double) -> String {
+        let bytes = networkBytes(value)
+        return bytes == "—" ? bytes : bytes + "/s"
+    }
+
+    static func networkRates(receive: Metric, send: Metric) -> MetricText {
+        let receive = metric(receive, format: networkRate)
+        let send = metric(send, format: networkRate)
+        let reasons = [receive.reason.map { "Receive: " + $0 }, send.reason.map { "Send: " + $0 }].compactMap(\.self)
+        return MetricText(text: "↓ \(receive.text) ↑ \(send.text)", reason: reasons.isEmpty ? nil : reasons.joined(separator: "; "))
+    }
+
     static func pressure(_ header: SnapshotHeader?) -> String {
         guard let header, header.status != .unavailable, let pressure = header.system.memoryPressure.value else {
             return "Memory pressure: Unavailable"
@@ -78,7 +103,7 @@ enum Display {
 }
 
 enum ProcessColumn: String, CaseIterable {
-    case name, cpu, power, footprint, readRate, writeRate, pid, user, cpuTime, rss, readBytes, writtenBytes
+    case name, cpu, power, footprint, readRate, writeRate, network, pid, user, cpuTime, rss, readBytes, writtenBytes, receivedBytes, sentBytes
 
     var title: String {
         switch self {
@@ -88,12 +113,15 @@ enum ProcessColumn: String, CaseIterable {
         case .footprint: "Memory"
         case .readRate: "Read/s"
         case .writeRate: "Write/s"
+        case .network: "Network"
         case .pid: "PID"
         case .user: "User"
         case .cpuTime: "CPU time"
         case .rss: "RSS"
         case .readBytes: "Read total"
         case .writtenBytes: "Written total"
+        case .receivedBytes: "Received"
+        case .sentBytes: "Sent"
         }
     }
 
@@ -101,6 +129,8 @@ enum ProcessColumn: String, CaseIterable {
         switch self {
         case .power: "OS-attributed average power of this process (own processes only). Not Activity Monitor's Energy Impact."
         case .footprint: "Same as Activity Monitor's Memory column (phys_footprint): memory this process is charged for, including compressed and swapped pages. RSS (optional column) counts shared pages and is usually misleading."
+        case .network: "TCP/UDP bytes per second attributed by macOS (own processes). Unavailable shows —, never 0."
+        case .receivedBytes, .sentBytes: "Observed TCP/UDP bytes, including retained closed sockets; not complete process-lifetime totals."
         default: nil
         }
     }
@@ -110,7 +140,7 @@ enum ProcessColumn: String, CaseIterable {
     }
 
     var optional: Bool {
-        [.cpuTime, .rss, .readBytes, .writtenBytes].contains(self)
+        [.cpuTime, .rss, .readBytes, .writtenBytes, .receivedBytes, .sentBytes].contains(self)
     }
 
     var sort: ProcessSort? {
@@ -121,10 +151,11 @@ enum ProcessColumn: String, CaseIterable {
         case .footprint: .footprint
         case .readRate: .diskReadBps
         case .writeRate: .diskWriteBps
+        case .network: .network
         case .pid: .pid
         case .cpuTime: .cpuTime
         case .rss: .rss
-        case .user, .readBytes, .writtenBytes: nil
+        case .user, .readBytes, .writtenBytes, .receivedBytes, .sentBytes: nil
         }
     }
 
@@ -141,6 +172,9 @@ enum ProcessColumn: String, CaseIterable {
         case .writeRate: Display.metric(process.diskWriteBps) { Display.bytes($0) + "/s" }
         case .readBytes: Display.metric(process.diskReadBytes, format: Display.bytes)
         case .writtenBytes: Display.metric(process.diskWrittenBytes, format: Display.bytes)
+        case .network: Display.networkRates(receive: process.networkReceiveBps, send: process.networkSendBps)
+        case .receivedBytes: Display.metric(process.networkReceivedBytes, format: Display.networkBytes)
+        case .sentBytes: Display.metric(process.networkSentBytes, format: Display.networkBytes)
         case .cpuTime:
             if let time = process.cpuTimeNS {
                 MetricText(text: String(format: "%.1f s", Double(time) / 1_000_000_000), reason: nil)

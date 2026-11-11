@@ -148,7 +148,7 @@ final class ChartSelection {
 }
 
 enum HistoryChartKind: String, CaseIterable {
-    case systemCPU, systemMemory, pressure, swap, compressed, systemPower, cpu, memory, io, power
+    case systemCPU, systemMemory, pressure, swap, compressed, systemPower, systemNetwork, cpu, memory, io, power, network
 
     var identifier: String {
         switch self {
@@ -158,6 +158,8 @@ enum HistoryChartKind: String, CaseIterable {
         case .swap: "systemSwapChart"
         case .compressed: "systemCompressedChart"
         case .systemPower: "systemPowerChart"
+        case .systemNetwork: "systemNetworkChart"
+        case .network: "processNetworkChart"
         case .power: "processPowerChart"
         case .cpu: "processCPUChart"
         case .memory: "processMemoryChart"
@@ -175,6 +177,8 @@ enum HistoryChartKind: String, CaseIterable {
         case .cpu: "CPU history, percent (one core = 100%)"
         case .memory: "Memory (footprint) history, bytes"
         case .io: "I/O history, bytes per second"
+        case .systemNetwork: "System network history, bytes per second"
+        case .network: "Network history, bytes per second"
         case .systemPower: "System power history, watts"
         case .power: "Process power history, watts (OS-attributed)"
         }
@@ -187,9 +191,18 @@ enum HistoryChartKind: String, CaseIterable {
         case .pressure: [{ $0.memoryPressurePercent }]
         case .memory: [{ $0.footprintBytes }]
         case .io: [{ $0.diskReadBps }, { $0.diskWriteBps }]
+        case .systemNetwork, .network: [{ $0.networkReceiveBps }, { $0.networkSendBps }]
         case .systemPower: [{ $0.systemPowerMW }]
         case .power: [{ $0.powerMW }]
         case .swap, .compressed: []
+        }
+    }
+
+    var seriesLabels: [String] {
+        switch self {
+        case .io: ["Read", "Write"]
+        case .systemNetwork, .network: ["Receive", "Send"]
+        default: [label]
         }
     }
 
@@ -198,6 +211,7 @@ enum HistoryChartKind: String, CaseIterable {
         case .systemCPU, .cpu: Display.percent(value)
         case .pressure: String(format: "%.0f%%", value)
         case .io: Display.bytes(value) + "/s"
+        case .systemNetwork, .network: Display.networkRate(value)
         case .systemPower, .power: Display.watts(value / 1000)
         default: Display.bytes(value)
         }
@@ -205,7 +219,7 @@ enum HistoryChartKind: String, CaseIterable {
 
     func values(at point: HistoryPoint?) -> String {
         fields.enumerated().map { index, field in
-            let prefix = self == .io ? (index == 0 ? "Read: " : "Write: ") : ""
+            let prefix = fields.count > 1 ? seriesLabels[index] + ": " : ""
             guard let point, let metric = field(point) else { return prefix + "No history" }
             return prefix + metricText(metric)
         }.joined(separator: ", ")
@@ -243,7 +257,7 @@ struct HistoryChart: View {
     }
 
     var body: some View {
-        let system = [.systemCPU, .systemMemory, .pressure, .swap, .compressed, .systemPower].contains(kind)
+        let system = [.systemCPU, .systemMemory, .pressure, .swap, .compressed, .systemPower, .systemNetwork].contains(kind)
         let series = system ? model.systemHistory : model.history
         let memoryPoints = kind == .swap || kind == .compressed ? model.memorySummaryHistory : []
         if hasTrend {
@@ -287,7 +301,7 @@ private struct HistoryPlot: View {
             for (index, field) in kind.fields.enumerated() {
                 let lines = kind == .pressure ? ChartGeometry.pressureSegments(series) : ChartGeometry.segments(series, value: field)
                 for line in lines {
-                    groups.append(PlotSegment(id: groups.count, label: kind == .io ? (index == 0 ? "Read" : "Write") : kind.label, points: line))
+                    groups.append(PlotSegment(id: groups.count, label: kind.seriesLabels[index], points: line))
                 }
             }
         }
@@ -328,7 +342,7 @@ private struct HistoryPlot: View {
                 .foregroundStyle(color)
                 .lineStyle(StrokeStyle(lineWidth: 1.5))
         } else {
-            if !compact, kind != .io {
+            if !compact, kind.fields.count == 1 {
                 AreaMark(x: .value("Time", point.time), y: .value("Value", point.value), series: .value("Segment", segment.id), stacking: .unstacked)
                     .foregroundStyle(.blue.opacity(0.1))
             }
@@ -339,7 +353,7 @@ private struct HistoryPlot: View {
         if !compact, segment.points.count == 1 {
             let color: Color = switch kind {
             case .pressure: Color(nsColor: ChartGeometry.pressureColor(point.pressure))
-            case .io: segment.label == "Write" ? .orange : .blue
+            case .io, .systemNetwork, .network: segment.label == kind.seriesLabels[1] ? .orange : .blue
             default: .blue
             }
             PointMark(x: .value("Time", point.time), y: .value("Value", point.value))
@@ -376,8 +390,8 @@ private struct HistoryPlot: View {
         .chartYScale(domain: 0 ... maximum, range: .plotDimension(padding: 2))
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
-        .chartForegroundStyleScale(domain: kind == .io ? ["Read", "Write"] : [kind.label], range: [.blue, .orange])
-        .chartLegend(kind == .io ? .visible : .hidden)
+        .chartForegroundStyleScale(domain: kind.seriesLabels, range: [.blue, .orange])
+        .chartLegend(!compact && kind.fields.count > 1 ? .visible : .hidden)
         .chartXSelection(value: selectionBinding)
         .chartOverlay { proxy in
             GeometryReader { geometry in

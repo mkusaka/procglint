@@ -12,7 +12,7 @@ The screenshots use isolated demonstration data, not a live process list.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/main-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/images/main-light.png">
-  <img src="docs/images/main-light.png" alt="procglint process monitor with system and Battery cards, a sortable Power column, and the selected process’s Launched by chain and synchronized history charts" width="1360">
+  <img src="docs/images/main-light.png" alt="procglint process monitor with system Network and Battery cards, sortable Power and Network columns, and the selected process’s Launched by chain and synchronized history charts" width="1360">
 </picture>
 
 <picture>
@@ -25,6 +25,7 @@ The screenshots use isolated demonstration data, not a live process list.
 
 - Process CPU, cumulative CPU time, Memory (footprint) and optional RSS, attributed disk I/O counters/rates, OS-attributed power, PID and owner; system CPU, memory pressure, swap usage and defined VM memory statistics.
 - Battery charge, charging/time-remaining state, system power and discharge rate, with health/cycle count in the tooltip. Battery and process power history share the charts’ hover cursor; desktop Macs show no Battery card.
+- System and per-process network receive/send rates, optional observed byte counters, and synchronized two-series history charts.
 - Search, filter, sort and choose columns; inspect details, pin processes and read bounded history with explicit gaps for unobserved time.
 - Copy List / Copy details put Markdown on the clipboard for pasting into an agent; command lines only when enabled.
 - Optional CPU/memory menu-bar display. Default updates are 5 seconds for the window and 10 seconds for the menu bar; no periodic sampling without an active lease.
@@ -65,6 +66,12 @@ The process table fills when the background agent is available. If it cannot be 
 On Macs with a battery, the **Battery** card shows charge, charging status and the available time estimate. **Using** is system power; **Draining** is battery discharge power and appears only while discharging. They are separate measurements, not a sum of process power. Hover over the card for battery health and cycle count, or over its sparkline for system power history in watts.
 
 The default **Power** column after CPU sorts by OS-attributed average power, displayed in mW or W. It is available for own processes only: it is **not Activity Monitor’s Energy Impact** and does not attribute battery drain. The inspector includes a synchronized Power history chart in watts. Unavailable or warming-up values remain **—**, never zero.
+
+### Network
+
+The default **Network** column after Write/s shows ↓ receive / ↑ send rates and sorts by their sum. The **Network** card shows system rates; the inspector’s **Network per second** chart shares the other charts’ hover cursor. Rates use decimal B/s, KB/s and MB/s. Optional **Received** / **Sent** columns show observed socket bytes, including retained closed sockets, not complete process-lifetime totals. Network values are included in Copy List and Copy details.
+
+Per-process TCP/UDP attribution uses the private macOS NetworkStatistics framework, loaded at runtime, and is available for **own processes only**. Unsupported systems, denied access and warming-up readings show **—**, never a fabricated zero. System rates come from active non-loopback interfaces and are not a sum of the listed processes.
 
 ### Which memory numbers matter?
 

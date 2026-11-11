@@ -103,7 +103,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSSearch
             item.headerToolTip = column.tooltip
             item.headerCell.setAccessibilityHelp(column.tooltip)
             item.headerCell.alignment = column.numeric ? .right : .left
-            item.width = column == .name ? 200 : 100
+            item.width = column == .name ? 180 : (column == .network ? 230 : 80)
             item.isHidden = !model.preferences.visible(column)
             if column.sort != nil {
                 item.sortDescriptorPrototype = NSSortDescriptor(key: column.rawValue, ascending: column == .name || column == .pid)

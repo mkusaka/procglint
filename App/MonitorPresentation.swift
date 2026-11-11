@@ -10,7 +10,7 @@ struct MemorySummaryPoint: Equatable {
 }
 
 enum SummaryCard: String, CaseIterable, Identifiable {
-    case cpu, memory, pressure, swap, compressed, battery
+    case cpu, memory, pressure, swap, compressed, network, battery
 
     static func visible(in header: SnapshotHeader?) -> [Self] {
         allCases.filter { $0 != .battery || header?.system.battery != nil }
@@ -27,6 +27,7 @@ enum SummaryCard: String, CaseIterable, Identifiable {
         case .pressure: "Memory pressure"
         case .swap: "Swap"
         case .compressed: "Compressed"
+        case .network: "Network"
         case .battery: "Battery"
         }
     }
@@ -38,6 +39,7 @@ enum SummaryCard: String, CaseIterable, Identifiable {
         case .pressure: "gauge.with.dots.needle.50percent"
         case .swap: "arrow.left.arrow.right"
         case .compressed: "arrow.down.right.and.arrow.up.left"
+        case .network: "network"
         case .battery: header?.system.battery.map { BatteryDisplay(battery: $0).symbol } ?? "battery.0"
         }
     }
@@ -51,6 +53,7 @@ enum SummaryCard: String, CaseIterable, Identifiable {
         case .pressure: return Display.metric(system.memoryPressurePercent, format: { String(format: "%.0f%%", $0) }).text
         case .swap: return Display.metric(system.swapUsedBytes, format: Display.memoryBytes).text
         case .compressed: return Display.memoryBytes(Double(system.compressedBytes))
+        case .network: return "↓ " + Display.metric(system.networkReceiveBps, format: Display.networkRate).text
         case .battery: return system.battery.map { Display.metric($0.percent, format: { String(format: "%.0f%%", $0) }).text } ?? "—"
         }
     }
@@ -63,6 +66,7 @@ enum SummaryCard: String, CaseIterable, Identifiable {
         case .pressure: return header.system.memoryPressure.value?.rawValue.capitalized ?? "Unavailable"
         case .swap: return Display.metric(header.system.swapUsedBytes, format: Display.memoryBytes).reason ?? "On disk"
         case .compressed: return "In memory"
+        case .network: return "↑ " + Display.metric(header.system.networkSendBps, format: Display.networkRate).text
         case .battery: return header.system.battery.map { BatteryDisplay(battery: $0).caption } ?? "Unavailable"
         }
     }
@@ -74,6 +78,7 @@ enum SummaryCard: String, CaseIterable, Identifiable {
         case .pressure: .pressure
         case .swap: .swap
         case .compressed: .compressed
+        case .network: .systemNetwork
         case .battery: .systemPower
         }
     }

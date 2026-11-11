@@ -72,7 +72,11 @@ final class UITestingFixture: MonitorService {
                 diskReadBps: cpu.status == .ok ? .ok(1024) : cpu,
                 diskWriteBps: cpu.status == .ok ? .ok(2048) : cpu,
                 startTime: date, path: "/fixture/worker",
-                powerMW: !own || denied ? .permissionDenied : (cpu.status == .ok ? .ok(index == 1 ? 12 : Double(index + 1) * 1030) : cpu)
+                powerMW: !own || denied ? .permissionDenied : (cpu.status == .ok ? .ok(index == 1 ? 12 : Double(index + 1) * 1030) : cpu),
+                networkReceiveBps: !own || denied ? .permissionDenied : (cpu.status == .ok ? .ok(Double(index + 1) * 1_200_000) : cpu),
+                networkSendBps: !own || denied ? .permissionDenied : (cpu.status == .ok ? .ok(Double(index + 1) * 340_000) : cpu),
+                networkReceivedBytes: !own || denied ? .permissionDenied : .ok(Double(index + 1) * 12_000_000),
+                networkSentBytes: !own || denied ? .permissionDenied : .ok(Double(index + 1) * 3_400_000)
             )
         }
         current = Snapshot(
@@ -84,7 +88,7 @@ final class UITestingFixture: MonitorService {
                                   compressedBytes: 536_870_912, activeBytes: 2_684_354_560,
                                   inactiveBytes: 1_073_741_824, freeBytes: 3_221_225_472,
                                   memoryPressure: .ok(.normal), memoryPressurePercent: .ok(39), swapUsedBytes: .ok(1_073_741_824), swapTotalBytes: .ok(2_147_483_648),
-                                  battery: battery.metrics),
+                                  battery: battery.metrics, networkReceiveBps: .ok(12_400_000), networkSendBps: .ok(1_200_000)),
             processes: rows
         )
         store = SnapshotStore(clock: FakeClock())
@@ -141,7 +145,10 @@ final class UITestingFixture: MonitorService {
     func history(_ request: HistoryRequest) async throws -> [HistorySeries] {
         let date = current.sampledAt
         return request.series.map { series in
-            let power = current.processes.first { $0.processKey.rawValue == series }?.powerMW ?? .unsupported
+            let process = current.processes.first { $0.processKey.rawValue == series }
+            let power = process?.powerMW ?? .unsupported
+            let receive = series == "system" ? current.system.networkReceiveBps : (process?.networkReceiveBps ?? .unsupported)
+            let send = series == "system" ? current.system.networkSendBps : (process?.networkSendBps ?? .unsupported)
             let systemPower = current.system.battery?.systemPowerMW
             let points = stride(from: -600.0, through: 0, by: 5).map { offset in
                 let level: MemoryPressure = (-210.0 ... -190).contains(offset) ? .critical : ((-240.0 ... -160).contains(offset) ? .warning : .normal)
@@ -164,7 +171,9 @@ final class UITestingFixture: MonitorService {
                                         metric.value.map { .ok($0 + 2500 * sin(offset / 35)) } ?? metric
                                     } : nil,
                                     batteryPercent: series == "system" ? current.system.battery?.percent : nil,
-                                    powerMW: series == "system" ? nil : (power.value.map { .ok($0 * (1 + 0.2 * sin(offset / 30))) } ?? power))
+                                    powerMW: series == "system" ? nil : (power.value.map { .ok($0 * (1 + 0.2 * sin(offset / 30))) } ?? power),
+                                    networkReceiveBps: receive.value.map { .ok($0 * (1 + 0.3 * sin(offset / 30))) } ?? receive,
+                                    networkSendBps: send.value.map { .ok($0 * (1 + 0.2 * sin(offset / 40))) } ?? send)
             }
             return HistorySeries(series: series, points: points,
                                  gaps: [HistoryGap(from: date.addingTimeInterval(-19), to: date.addingTimeInterval(-6))])

@@ -17,19 +17,19 @@ struct CopyTextTests {
         model.setSearch("Worker")
         model.setSort(column: .name, ascending: true)
         await model.setVisibility(window: true, menuBar: false)
-        let columns: [ProcessColumn] = [.name, .pid, .cpuTime, .readRate]
+        let columns: [ProcessColumn] = [.name, .pid, .cpuTime, .readRate, .network]
         // A pending sort request must not relabel rows that still show the previous query.
         model.setSort(column: .cpu, ascending: false)
         let text = try CopyText.list(rows: model.rows, columns: columns, header: model.header, totalMatched: model.totalMatched, query: #require(model.displayedQuery))
         let count = filter == .all ? 19 : (filter == .mine ? 18 : 1)
         #expect(text.contains("\(count) of \(count) processes · sorted by Name asc"))
-        #expect(text.contains("| Name | PID | CPU time | Read/s |\n|---|---:|---:|---:|"))
+        #expect(text.contains("| Name | PID | CPU time | Read/s | Network |\n|---|---:|---:|---:|---:|"))
         #expect(!text.contains("| Power |") && !text.contains("Fixture Terminal"))
         let tableRows = text.components(separatedBy: "\n").dropFirst(5)
         #expect(Array(tableRows) == model.rows.map { row in "| " + columns.map { $0.text(for: row).text }.joined(separator: " | ") + " |" })
         #expect(text.contains("Other User Worker") == (filter == .all))
         if filter != .pinned {
-            #expect(text.contains("| Warming Worker | 4117 | 18.0 s | — |"))
+            #expect(text.contains("| Warming Worker | 4117 | 18.0 s | — | ↓ — ↑ — |"))
         }
     }
 
@@ -61,7 +61,7 @@ struct CopyTextTests {
         let snapshot = try await fixture.snapshot(top: 20, sort: .cpu)
         let text = try CopyText.list(rows: snapshot.processes, columns: [.name], header: snapshot.header,
                                      totalMatched: 20, query: ProcessQuery())
-        #expect(text.contains("System: CPU 25.0% · Memory 4 GB of 8 GB · Pressure Normal 39% · Swap 1 GB · Compressed 512 MB"))
+        #expect(text.contains("System: CPU 25.0% · Memory 4 GB of 8 GB · Pressure Normal 39% · Swap 1 GB · Compressed 512 MB · Network ↓ 12.4 MB/s ↑ 1.2 MB/s"))
         #expect(text.contains("Battery") == (battery != .none))
         if battery == .charging {
             #expect(text.contains("Battery 69% Charging · 1:53 to full"))
@@ -72,6 +72,10 @@ struct CopyTextTests {
     func detailsCopyExactlyDisplayedRedactedStringsOnlyWhenEnabled(enabled: Bool) throws {
         var process = try sample()
         process.path = "/fixture/worker"
+        process.networkReceiveBps = .ok(1_200_000)
+        process.networkSendBps = .permissionDenied
+        process.networkReceivedBytes = .ok(12_000_000)
+        process.networkSentBytes = .permissionDenied
         process.commandLine = ProcessCommandLine(arguments: ["node", "server.js", "--token", "test-secret"])
         process.cwd = WorkingDirectory(value: "/fixture/project")
         process.ancestors = [ProcessAncestor(pid: 43, name: "Terminal", commandLine: ProcessCommandLine(arguments: ["shell", "--auth=test-secret"])),
@@ -88,6 +92,9 @@ struct CopyTextTests {
         }
         #expect(text.contains("| Read/s | — (warming_up) |"))
         #expect(text.contains("| Written total | — (permission_denied) |"))
+        #expect(text.contains("| Network | ↓ 1.2 MB/s ↑ — (Send: permission_denied) |"))
+        #expect(text.contains("| Received | 12.0 MB |"))
+        #expect(text.contains("| Sent | — (permission_denied) |"))
         #expect(text.contains("- launchd (1)\n\n") && text.contains("- Terminal (43)"))
         #expect(try #require(text.range(of: "- launchd (1)")).lowerBound < #require(text.range(of: "- Terminal (43)")).lowerBound)
         #expect(text.contains("Direct children: 2 · Parent chain incomplete"))
@@ -124,7 +131,8 @@ struct CopyTextTests {
         let points: [(Double, Metric)] = [(0, .ok(999)), (10, .ok(10)), (20, .ok(900)), (30, .ok(30)), (40, .warmingUp), (50, .ok(999))]
         let history = HistorySeries(series: process.processKey.rawValue, points: points.map { time, cpu in
             HistoryPoint(t: Date(timeIntervalSince1970: time), cpuPercent: cpu, footprintBytes: .ok(2048),
-                         diskReadBps: .ok(1024), diskWriteBps: .permissionDenied, powerMW: .ok(2000))
+                         diskReadBps: .ok(1024), diskWriteBps: .permissionDenied, powerMW: .ok(2000),
+                         networkReceiveBps: cpu.value.map { .ok($0 * 1000) } ?? cpu, networkSendBps: .permissionDenied)
         }, gaps: [HistoryGap(from: Date(timeIntervalSince1970: 19), to: Date(timeIntervalSince1970: 21))])
         let text = CopyText.details(process: process, permissions: [], history: history,
                                     window: Date(timeIntervalSince1970: 10) ... Date(timeIntervalSince1970: 40))
@@ -132,7 +140,8 @@ struct CopyTextTests {
         #expect(text.contains("Memory (footprint) history, bytes: min 2.0 KiB · max 2.0 KiB · latest 2.0 KiB"))
         #expect(text.contains("Read: min 1.0 KiB/s · max 1.0 KiB/s · latest 1.0 KiB/s; Write: min — · max — · latest — (permission_denied)"))
         #expect(text.contains("Process power history, watts (OS-attributed): min 2.0 W · max 2.0 W · latest 2.0 W"))
-        #expect(!text.contains("999.0%") && !text.contains("900.0%"))
+        #expect(text.contains("Network history, bytes per second: Receive: min 10.0 KB/s · max 30.0 KB/s · latest — (warming_up); Send: min — · max — · latest — (permission_denied)"))
+        #expect(!text.contains("999.0%") && !text.contains("900.0%") && !text.contains("999 KB/s") && !text.contains("900 KB/s"))
     }
 
     @MainActor
