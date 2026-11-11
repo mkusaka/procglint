@@ -18,7 +18,7 @@ final class ProcglintUITests: XCTestCase {
             expectValue(window.staticTexts["Charging · 1:53 to full"], equals: "Charging · 1:53 to full")
             let powerColumn = window.tables["processTable"].descendants(matching: .any)["column.power"]
             XCTAssertTrue(powerColumn.waitForExistence(timeout: 5))
-            expectValue(powerColumn, equals: "Power")
+            wait(for: NSPredicate(format: "title == %@ OR label == %@", "Power", "Power"), on: powerColumn)
             for identifier in ["systemCPUChart", "systemMemoryChart", "systemPressureChart", "systemPowerChart"] {
                 let chart = window.descendants(matching: .any)[identifier]
                 XCTAssertTrue(chart.waitForExistence(timeout: 5))
