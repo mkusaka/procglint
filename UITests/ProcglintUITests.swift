@@ -20,9 +20,8 @@ final class ProcglintUITests: XCTestCase {
             for (column, title) in [("power", "Power"), ("network", "Network")] {
                 let header = window.tables["processTable"].descendants(matching: .any)["column.\(column)"]
                 XCTAssertTrue(header.waitForExistence(timeout: 5))
+                // Not isHittable: on narrower CI screens the trailing columns scroll horizontally.
                 wait(for: NSPredicate(format: "title == %@", title), on: header)
-                XCTAssertTrue(header.isHittable)
-                XCTAssertLessThanOrEqual(header.frame.maxX, window.tables["processTable"].frame.maxX)
             }
             for identifier in ["systemCPUChart", "systemMemoryChart", "systemPressureChart", "systemPowerChart", "systemNetworkChart"] {
                 let chart = window.descendants(matching: .any)[identifier]
